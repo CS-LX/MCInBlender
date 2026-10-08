@@ -203,7 +203,7 @@ class ViewportRenderer:
             gpu.state.depth_test_set(depth)
             gpu.state.depth_mask_set(mask)
 
-    def draw_world(self, context, player):
+    def draw_world(self, context, player, show_selection=True):
         self.flush()
         if not self.shader or not player or not player.in_world:
             return
@@ -233,7 +233,8 @@ class ViewportRenderer:
                             continue
                         self.shader.uniform_sampler('atlas',self.textures[tex])
                         batch.draw(self.shader)
-            self.draw_selection(context)
+            if show_selection:
+                self.draw_selection(context)
         finally:
             gpu.state.blend_set(blend)
             gpu.state.depth_test_set(depth)

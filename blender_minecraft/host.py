@@ -22,6 +22,7 @@ class Session:
         self.window = context.window
         self.region = next(r for r in self.area.regions if r.type == 'WINDOW')
         self.space = self.area.spaces.active
+        self.scene = context.scene
         self.original = (self.space.region_3d.view_rotation.copy(),self.space.region_3d.view_location.copy(),
                          self.space.region_3d.view_distance,self.space.region_3d.view_perspective,
                          self.space.lens,self.space.overlay.show_overlays)
@@ -35,6 +36,16 @@ class Session:
         self.teleport = 0 # Initial connection adopts vanilla position; explicit teleports start at 1.
         self.player = None
         self.captured = False
+        self.follow_camera = context.scene.mciblender.camera_view != 'BLENDER'
+        self.syncing_view = False
+        self.camera_request = None
+        self.camera_request_time = 0
+        self.editor_view = None
+        self.collision_dirty = False
+        self.last_collision_update = 0
+        self.collision_rebuilds = 0
+        self.collider_signature = self.scene_signature()
+        self.last_scene_poll = 0
         self.closed = False
         self.started = time.monotonic()
         self.events = []
@@ -48,12 +59,13 @@ class Session:
         self.width,self.height = 1280,720
         self.draw_handles = [bpy.types.SpaceView3D.draw_handler_add(self.draw_world,(),'WINDOW','POST_VIEW'),
                              bpy.types.SpaceView3D.draw_handler_add(self.draw_overlay,(),'WINDOW','POST_PIXEL')]
-        self.space.overlay.show_overlays = False
+        self.space.overlay.show_overlays = not self.follow_camera
         self.space.clip_end = max(1000,self.space.clip_end)
         self.collision.nearby(self.position)
+        self.camera_request = {'FIRST':0,'THIRD_BACK':1,'THIRD_FRONT':2,'BLENDER':1}[context.scene.mciblender.camera_view]
 
     def correct_context(self):
-        return bpy.context.area == self.area and bpy.context.region == self.region
+        return bpy.context.area == self.area and bpy.context.region == self.region and bpy.context.scene == self.scene
 
     def error(self, exc):
         text = ''.join(traceback.format_exception(exc))
@@ -78,9 +90,19 @@ class Session:
         if player:
             self.player = player
         self.dispatch_commands()
+        self.dispatch_camera()
+        if time.monotonic()-self.last_scene_poll>0.5:
+            self.last_scene_poll = time.monotonic()
+            signature = self.scene_signature()
+            if signature != self.collider_signature:
+                self.collider_signature = signature
+                self.collision_dirty = True
         if self.player and self.player.in_world:
             self.position = self.player.position
-            self.update_camera()
+            if self.follow_camera:
+                self.update_camera()
+        if self.window.scene == self.scene and self.collision_dirty and self.scene.mciblender.live_collision and time.monotonic()-self.last_collision_update>0.25:
+            self.refresh_collision()
         self.collision.nearby(self.position)
         self.collision.flush(self.link)
         for kind,payload in self.link.render_messages():
@@ -99,6 +121,67 @@ class Session:
         if time.monotonic()-self.last_snapshot>2:
             self.last_snapshot = time.monotonic()
             self.write_diagnostics()
+
+    def refresh_collision(self):
+        with bpy.context.temp_override(window=self.window,area=self.area,region=self.region):
+            self.collision.rebuild(bpy.context,incremental=True)
+        self.collision.nearby(self.position)
+        self.collision_dirty = False
+        self.last_collision_update = time.monotonic()
+        self.collision_rebuilds += 1
+
+    def scene_signature(self):
+        # Deletion, visibility and custom collision toggles may not emit a mesh
+        # geometry update, so detect those without re-evaluating all meshes.
+        return tuple((o.as_pointer(),o.hide_get(),bool(o.get('mc_collision',True)),o.get('mc_collider','MESH'))
+                     for o in self.scene.objects if o.type == 'MESH' and not o.get('mc_generated'))
+
+    def play_view(self):
+        rv = self.space.region_3d
+        if not self.follow_camera:
+            self.editor_view = (rv.view_rotation.copy(),rv.view_location.copy(),rv.view_distance,rv.view_perspective,self.space.lens)
+        self.follow_camera = self.scene.mciblender.camera_view != 'BLENDER'
+        self.space.overlay.show_overlays = False
+        self.space.show_gizmo = False
+
+    def choose_view(self, mode):
+        if mode == 'BLENDER':
+            self.edit_view()
+        else:
+            self.play_view()
+        self.camera_request = {'FIRST':0,'THIRD_BACK':1,'THIRD_FRONT':2,'BLENDER':1}[mode]
+
+    def dispatch_camera(self):
+        if not self.player or not self.player.in_world:
+            return
+        if self.camera_request is not None:
+            if self.player.camera_mode == self.camera_request:
+                self.camera_request = None
+            elif not self.player.screen_open and time.monotonic()>=self.camera_request_time:
+                self.link.input(1,62,1)
+                self.link.input(1,62,0)
+                self.camera_request_time = time.monotonic()+0.25
+        elif self.follow_camera and self.scene.mciblender.camera_view != 'BLENDER':
+            self.syncing_view = True
+            try:
+                self.scene.mciblender.camera_view = ('FIRST','THIRD_BACK','THIRD_FRONT')[self.player.camera_mode]
+            finally:
+                self.syncing_view = False
+
+    def edit_view(self):
+        if not self.follow_camera:
+            return
+        self.follow_camera = False
+        rv = self.space.region_3d
+        if self.editor_view:
+            rv.view_rotation,rv.view_location,rv.view_distance,rv.view_perspective,self.space.lens = self.editor_view
+        else:
+            # Keep the same eye/orientation, with an orbit pivot in front of it.
+            forward = rv.view_rotation @ Vector((0,0,-1))
+            rv.view_location += forward*(8-rv.view_distance)
+            rv.view_distance = 8
+        self.space.overlay.show_overlays = True
+        self.space.show_gizmo = True
 
     def update_camera(self):
         player = self.player
@@ -157,7 +240,10 @@ class Session:
         if not self.correct_context() or self.closed:
             return
         try:
-            self.renderer.draw_world(bpy.context,self.player)
+            if self.scene.mciblender.show_minecraft:
+                self.renderer.draw_world(bpy.context,self.player,show_selection=self.follow_camera)
+            else:
+                self.renderer.flush()
         except Exception as exc:
             self.error(exc)
 
@@ -165,11 +251,12 @@ class Session:
         if not self.correct_context() or self.closed:
             return
         try:
-            self.renderer.draw_overlay(bpy.context)
+            if self.follow_camera or self.captured:
+                self.renderer.draw_overlay(bpy.context)
             blf.size(0,14)
             blf.position(0,16,self.region.height-26,0)
             blf.color(0,0.7,0.95,1,1)
-            status = 'PLAYING | Shift+Esc releases input' if self.captured else 'Click Capture Input to play'
+            status = 'PLAYING | Shift+Esc edits Blender scene' if self.captured else ('BLENDER EDIT | Minecraft continues simulating' if not self.follow_camera else 'Click Play or Edit Scene')
             if not self.link.alive:
                 status = 'Waiting for Minecraft bridge...'
             blf.draw(0,'MCInBlender | '+status)
@@ -199,6 +286,10 @@ class Session:
         data['commands_pending'] = len(self.commands)
         data['input_captured'] = self.captured
         data['host_pid'] = os.getpid()
+        data['viewport_region'] = [self.region.x,self.region.y,self.region.width,self.region.height]
+        data['editor_mode'] = not self.follow_camera
+        data['camera_view'] = self.scene.mciblender.camera_view
+        data['collision_rebuilds'] = self.collision_rebuilds
         data['entity_kinds'] = dict(__import__('collections').Counter(struct.unpack_from('<I',r)[0] for r in self.renderer.entity_records))
         temp = target.with_suffix('.tmp')
         temp.write_text(json.dumps(data,indent=2),encoding='utf8')
@@ -211,6 +302,7 @@ class Session:
         for handle in self.draw_handles:
             bpy.types.SpaceView3D.draw_handler_remove(handle,'WINDOW')
         self.link.close()
-        rv = self.space.region_3d
-        rv.view_rotation,rv.view_location,rv.view_distance,rv.view_perspective,self.space.lens,self.space.overlay.show_overlays = self.original
+        if self.follow_camera:
+            rv = self.space.region_3d
+            rv.view_rotation,rv.view_location,rv.view_distance,rv.view_perspective,self.space.lens,self.space.overlay.show_overlays = self.original
         self.area.tag_redraw()

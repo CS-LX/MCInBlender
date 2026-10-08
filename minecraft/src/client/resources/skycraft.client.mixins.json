@@ -7,6 +7,7 @@
     "ChatComponentMixin",
     "ClientLevelAccessor",
     "ClientLevelDigMixin",
+    "ContainerScreenAccessor",
     "EntityCollideMixin",
     "FramerateLimitTrackerMixin",
     "InputConstantsMixin",

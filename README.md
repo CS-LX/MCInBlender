@@ -7,9 +7,9 @@ entities and UI. Minecraft meshes are drawn inside Blender's 3D viewport, alongs
 the user's scene. This is not a Minecraft host displaying Blender screenshots.
 
 **Status: playable developer prototype.** Native Blender ground collision,
-Minecraft block interaction, inventories, survival terrain, three camera modes,
-pause and dimension transitions have been tested in a real Blender + Minecraft
-session. See [verified features and gaps](docs/STATUS.md).
+Minecraft block interaction, crafting, containers, smelting, redstone, water flow,
+survival terrain, four camera choices and live Blender model collision have been
+tested in a real Blender + Minecraft session. See [verified features and gaps](docs/STATUS.md).
 
 ![Minecraft geometry, mobs and HUD inside a native Blender scene](docs/images/blender-native-world.png)
 
@@ -38,17 +38,33 @@ python scripts/launch.py --world scene
 
 # 在 Blender 中玩正常生成的 Minecraft 生存世界
 python scripts/launch.py --world normal
+
+# 使用自己的 Blender 场景作为游戏场景，保留模型、材质和修改器
+python scripts/launch.py --world normal --blend "C:/Projects/My Scene.blend"
 ```
 
 启动后在 3D 视图右侧边栏选择 **Minecraft → Capture Input / Play**。
 WASD 移动，鼠标看向/挖掘/放置，空格跳跃，E 背包，数字键和滚轮选择快捷栏，
-F5 切换视角，Esc 打开游戏菜单。**Shift+Esc 释放输入回到 Blender**。
+F5 切换视角，Esc 打开游戏菜单。**Shift+Esc 释放输入并恢复 Blender 自由视角和编辑工具**。
 菜单内的鼠标和文本输入同样由 Blender 转发。
 
+侧栏 **View** 提供第一人称、后方第三人称、前方第三人称、**Blender View**。
+选择 Blender View 后可自由旋转、平移、缩放视图；再次 Capture Input 会从这个
+固定视角操控 Minecraft 玩家。其他视角会随玩家移动。
+
 `scene` 模式创建一个新的 Blender 场景，不覆盖现有场景；玩家碰撞使用 Blender
-求值后的网格三角形。带 `mc_collider="BOX"` 的对象还提供生物与流体所需的体素碰撞。
-编辑场景后点击 **Update Blender Collision** 更新。普通 Minecraft 方块由 Minecraft
-管理，渲染到 Blender 视图的深度缓冲中。
+求值后的网格三角形。普通封闭网格提供生物与流体所需的 1/8 方块体积碰撞，
+开放网格提供薄壳；带 `mc_collider="BOX"` 的对象使用较快的轴对齐包围盒。
+默认 **Live Blender collision** 自动更新模型、修改器和变换产生的碰撞；
+也可关闭它，手动点击 **Update Blender Collision**。碰撞更新最多每秒四次，
+复杂模型仍需性能优化。
+
+融合方向是 **Blender 模型 → 游戏场景**：模型继续是原生 Blender 对象，可编辑、
+设置材质和修改器；Minecraft 保留方块、背包、生物和世界状态。设置对象自定义属性
+`mc_collision=false` 可将它作为不参与游戏碰撞的装饰。无需把 Minecraft 方块转成
+Blender 可编辑网格。模型场景保存在 `.blend`，游戏进度保存在 Minecraft 存档。
+
+![A Minecraft cow stands on an editable beveled Blender model](docs/images/blender-models-in-minecraft.png)
 
 `normal` 模式使用原版地形、自然出生位置、生存规则与维度。两个模式使用独立存档，
 都保存在被 Git 忽略的 `minecraft/run/saves/` 下。初始开发存档允许命令，便于测试。
@@ -69,8 +85,9 @@ F5 切换视角，Esc 打开游戏菜单。**Shift+Esc 释放输入回到 Blende
 
 Minecraft world geometry is rendered by Blender; only hand/HUD/menu pixels are
 composited as a transparent overlay. Minecraft's simulation runs in a hidden Java
-process. The current viewport meshes are GPU batches, not editable Blender objects
-and not yet available to offline Cycles renders.
+process. Live Minecraft meshes remain GPU batches. Blender models remain native
+Blender objects; the project does not convert Minecraft's world into editable
+Blender data blocks.
 
 ## Development and verification
 
@@ -85,6 +102,12 @@ python scripts/verify_runtime.py
 # Real Blender modal-input and dimension tests in a normal-mode session
 python scripts/launch.py --world normal --test-input
 python scripts/verify_survival.py
+
+# Crafting, containers, smelting, redstone and water through real Blender input
+python scripts/verify_gameplay.py
+
+# Restart only the Blender host to test live modeling and four camera choices
+python scripts/launch.py --only blender --world normal --verification fusion --test-input
 ```
 
 Run one developer session at a time. The live tests change the isolated development

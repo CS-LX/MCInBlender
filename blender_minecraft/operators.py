@@ -1,6 +1,6 @@
 import math
 import bpy
-from bpy.props import FloatProperty, FloatVectorProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, StringProperty
 from . import keys
 
 
@@ -21,11 +21,24 @@ def tick():
     return 1/60
 
 
+def camera_changed(settings, context):
+    session = package().SESSION
+    if session and not session.syncing_view:
+        session.choose_view(settings.camera_view)
+
+
 class Settings(bpy.types.PropertyGroup):
     spawn: FloatVectorProperty(name='Spawn (Blender meters)',default=(0,0,2),size=3)
     yaw: FloatProperty(name='Yaw',default=0)
     pitch: FloatProperty(name='Pitch',default=12,min=-89,max=89)
     command: StringProperty(name='Minecraft command',default='gamemode creative')
+    live_collision: BoolProperty(name='Live Blender collision',default=True)
+    show_minecraft: BoolProperty(name='Show live Minecraft world',default=True)
+    camera_view: EnumProperty(name='View',items=[('FIRST','First Person','Minecraft first person'),
+        ('THIRD_BACK','Third Person — Behind','Follow the player from behind'),
+        ('THIRD_FRONT','Third Person — Front','Face the player'),
+        ('BLENDER','Blender View','Use the Blender viewport camera; release input to orbit and edit')],
+        default='FIRST',update=camera_changed)
 
 
 class Start(bpy.types.Operator):
@@ -72,6 +85,7 @@ class Capture(bpy.types.Operator):
         if self.session.captured:
             return {'CANCELLED'}
         self.session.captured = True
+        self.session.play_view()
         self.last_screen = None
         self.mouse = (event.mouse_x,event.mouse_y)
         self.window = context.window
@@ -83,6 +97,8 @@ class Capture(bpy.types.Operator):
         if not self.session.closed:
             self.session.link.input(6)
         self.session.captured = False
+        if not self.session.closed:
+            self.session.edit_view()
         context.window_manager.event_timer_remove(self.timer)
         self.window.cursor_modal_restore()
         return {'FINISHED'}
@@ -156,8 +172,20 @@ class Rebuild(bpy.types.Operator):
     def execute(self, context):
         session = package().SESSION
         if session:
-            session.collision.rebuild(context)
-            session.collision.nearby(session.position)
+            session.refresh_collision()
+        return {'FINISHED'}
+
+
+class EditScene(bpy.types.Operator):
+    bl_idname = 'mciblender.edit_scene'
+    bl_label = 'Edit Blender Scene'
+    bl_description = 'Free the viewport camera and restore Blender modeling tools; Minecraft keeps its world'
+
+    def execute(self, context):
+        session = package().SESSION
+        if session:
+            session.link.input(6)
+            session.edit_view()
         return {'FINISHED'}
 
 
@@ -217,8 +245,12 @@ class Panel(bpy.types.Panel):
         else:
             layout.label(text='Connected' if session.link.alive else 'Waiting for Minecraft',icon='LINKED')
             layout.label(text=f'{len(session.renderer.sections)} mesh sections')
+            layout.prop(context.scene.mciblender,'camera_view')
             layout.operator('mciblender.capture',icon='PLAY')
-            layout.label(text='Shift+Esc: release input')
+            layout.label(text='Shift+Esc: return to Blender tools')
+            layout.operator('mciblender.edit_scene',icon='EDITMODE_HLT')
+            layout.prop(context.scene.mciblender,'live_collision')
+            layout.prop(context.scene.mciblender,'show_minecraft')
             layout.operator('mciblender.rebuild')
             layout.prop(context.scene.mciblender,'command',text='')
             layout.operator('mciblender.command')
@@ -227,4 +259,4 @@ class Panel(bpy.types.Panel):
                 layout.label(text='See logs/host-status.json',icon='ERROR')
 
 
-CLASSES = (Settings,Start,Stop,Capture,Command,Rebuild,Demo,Panel)
+CLASSES = (Settings,Start,Stop,Capture,Command,Rebuild,EditScene,Demo,Panel)

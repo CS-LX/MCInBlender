@@ -42,8 +42,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only',choices=['blender','minecraft','build'])
     ap.add_argument('--test-input',action='store_true',help='Enable Blender event simulation for integration tests')
+    ap.add_argument('--verification',choices=['fusion'],help='Run Blender scene integration checks in an isolated instance')
     ap.add_argument('--world',choices=['scene','normal'],default='scene')
+    ap.add_argument('--blend',type=Path,help='Use models from this .blend file as the host scene')
     args = ap.parse_args()
+    if args.blend and (not args.blend.is_file() or args.blend.suffix.lower()!='.blend'):
+        ap.error('--blend must name an existing .blend file')
     if os.name != 'nt':
         raise SystemExit('The current shared-memory bridge requires Windows x64.')
     if args.only in (None,'blender') and running('_blender_owner'):
@@ -60,14 +64,18 @@ def main():
     process_file = local/'processes.json'
     processes = json.loads(process_file.read_text()) if process_file.exists() else {}
     if args.only in (None,'blender'):
-        script = ROOT/'scripts'/'bootstrap_blender.py'
+        script = ROOT/'scripts'/('verify_fusion_in_blender.py' if args.verification == 'fusion' else 'bootstrap_blender.py')
         out = open(logs/'blender.log','w',encoding='utf8')
         env = os.environ.copy()
         env['MCIBLENDER_WORLD'] = args.world
+        if args.blend:
+            env['MCIBLENDER_USE_CURRENT_SCENE'] = '1'
         temp = ROOT/'.local'/'blender-temp'
         temp.mkdir(parents=True,exist_ok=True)
         env['TEMP'] = env['TMP'] = str(temp)
         command = [blender,'--factory-startup']
+        if args.blend:
+            command.append(str(args.blend.resolve()))
         if args.test_input:
             command.append('--enable-event-simulate')
         command.extend(['--python',str(script)])

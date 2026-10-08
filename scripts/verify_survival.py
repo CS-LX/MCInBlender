@@ -44,7 +44,7 @@ def command(text, predicate=None, timeout=30):
         with path.open(encoding='utf8',errors='replace') as stream:
             stream.seek(offset)
             lines = stream.read()
-        response = next((line for line in lines.splitlines() if 'System chat:' in line),response)
+        response = next((line for line in lines.splitlines() if 'System chat:' in line or '[System] [CHAT]' in line),response)
         if response and (predicate is None or predicate(state())):
             return response
         time.sleep(0.2)

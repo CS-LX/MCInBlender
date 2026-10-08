@@ -7,6 +7,10 @@ play Minecraft in Blender using SkyCraft. Blender must be the actual host. Aim
 for the complete Minecraft experience; do not declare completion after a mock,
 a streamed full-screen Minecraft image, or a limited block placement demo.
 
+User clarification: preserve both applications' capabilities, with Blender models
+entering the Minecraft gameplay scene. Editing Minecraft blocks as Blender meshes
+is explicitly not required. Provide first person, third person and Blender views.
+
 ## Architecture
 
 - Blender window and modal operator receive all keyboard, pointer, text and UI input.
@@ -14,7 +18,8 @@ a streamed full-screen Minecraft image, or a limited block placement demo.
   in its own viewport. Native Blender scene geometry participates in depth testing.
 - Minecraft provides gameplay/simulation, emits render protocol messages and the
   transparent hand/HUD/screen overlay. It remains a separate hidden process.
-- Host scene collision, actors, water, damage and interactions travel back to MC.
+- Host scene collision travels back to MC; actor, host-water and damage integration
+  remain incomplete as tracked below.
 - Save/load, death/respawn, survival/creative, inventory/crafting, block entities,
   redstone, fluids, mobs, combat, dimensions and multiplayer need real verification.
 
@@ -71,17 +76,55 @@ A restart regression initially exposed an unintended teleport to the default
 Blender origin. The fix publishes state before heartbeat and reserves sequence
 zero for adopting a vanilla player's position; the live restart regression passed.
 
+## Stage 2 — Blender models and gameplay coexist
+
+- Release input to restore Blender orbit/pan/zoom, overlays and modeling tools.
+  Returning to play preserves the editor view for the next editing session.
+- View selector: first person, behind-player third person, front-facing third
+  person and Blender camera. In Blender camera mode the player remains controllable
+  from a fixed viewport angle.
+- Evaluated model geometry and modifiers update game collision automatically,
+  throttled to four updates/second. Updates replace regions without clearing the
+  entire collision world, so unchanged ground remains available.
+- Generic closed mesh volume and open mesh shells feed 1/8-block occupancy to
+  mobs and fluids. Player contact still uses exact triangles. Large/complex
+  meshes and continuously moving platforms need further optimization/physics work.
+- `--blend` loads the user's existing scene, keeping its native Blender data.
+  Game saves and `.blend` scene saves remain separate.
+- Read-only inventory, container-slot and targeted-block state aids diagnostics.
+  Real gameplay still uses ordinary keyboard/mouse handling.
+
+Real session checks (all passed):
+
+| Check | Evidence |
+| --- | --- |
+| 2x2 crafting | One log → four planks → one crafting table, using real slot clicks |
+| Place and use crafted workbench | Placed table, opened 3x3 grid, crafted four sticks |
+| Chest | Deposited five apples, closed/reopened, withdrew the same five |
+| Furnace | Inserted raw iron and coal, waited for smelting, collected iron ingot |
+| Redstone | Mouse-clicked lever, server verified lamp off → on → off |
+| Water | Used bucket; server verified source and adjacent flow, mesh updates observed |
+| Live Blender model creation/movement | Player stood at model top y=102; moving model let player fall to MC floor y=100 |
+| Evaluated modifier collision | Player stood on a beveled Blender mesh using its evaluated triangles |
+| Generic model volume | Live cow settled at y=102.125 on a model with top y=102 (subvoxel shell tolerance) |
+| Four view choices | Actual MC modes 1/2/0; player moved 3.79 blocks while Blender camera stayed fixed |
+| Scene persistence | Saved/reopened native `.blend`, reconnected game and retained Blender view |
+
+Test drivers: `scripts/verify_gameplay.py` and `scripts/verify_fusion_in_blender.py`.
+Local results: `artifacts/gameplay-tests.json`, `artifacts/fusion/tests.json`.
+The fusion tests save an ordinary Blender model scene in `artifacts/fusion/`.
+They do not bake or edit Minecraft geometry.
+
 ## Remaining work
 
-- Crafting, containers, furnaces, redstone, fluids, combat, portals,
-  enchantment and other vanilla systems need broader end-to-end gameplay tests.
+- Combat, physical portal traversal, enchantment and more vanilla systems need
+  end-to-end tests; tested systems still need broader item/recipe/block coverage.
 - Sky, weather, fog, night lighting, some special entity effects and sound routing
   need host-specific presentation. Audio currently comes from Minecraft.
 - Section culling/eviction, performance and long-session memory require work.
-- Generic meshes need volumetric collision for mobs/fluids; dynamic Blender
-  objects, Blender actor damage, destruction, host water and light integration
-  are incomplete. Light/solid/dug protocol messages are currently retained only.
-- No mesh baking to editable Blender objects or offline Blender render support.
+- Fast animated Blender objects, riding moving platforms, Blender actor damage,
+  destruction, host water and light integration are incomplete.
+  Light/solid/dug protocol messages are currently retained only.
 - Developer launcher only: authenticated production launch, multiplayer validation,
   distributable add-on/runtime packaging and install/update UX are unfinished.
 - Texture-pack/mod compatibility and non-Windows platforms are unverified.

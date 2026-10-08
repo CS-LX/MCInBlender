@@ -31,7 +31,7 @@ SkyCraft Skyrim host is unaffected. Existing v11 record layouts are unchanged.
 
 | Direction | Record | Payload |
 | --- | --- | --- |
-| MC → Blender render ring | 12 | UTF-8 JSON, schema 1: dimension, vanilla mode, screen name, pause/time/weather, health/food/XP, held item, game mode |
+| MC → Blender render ring | 12 | UTF-8 JSON, schema 1: dimension, vanilla mode, screen name, pause/time/weather, health/food/XP, held item, game mode, inventory counts, carried stack, container slots and GUI origin, targeted block |
 | Blender → MC input ring | 9 | No payload; release input and request normal Minecraft shutdown, which saves the integrated world |
 
 The development diagnostics inbox `.local/control/` accepts specific JSON actions
