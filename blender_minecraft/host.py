@@ -16,6 +16,7 @@ from .transport import HostLink
 from .renderer import ViewportRenderer
 from .collision import SceneCollision
 from .native_lighting import NativeLighting
+from .paths import data_root
 
 
 class Session:
@@ -312,7 +313,7 @@ class Session:
             self.error(exc)
 
     def write_diagnostics(self):
-        target = Path(__file__).resolve().parents[1]/'logs'/'host-status.json'
+        target = data_root()/'logs'/'host-status.json'
         target.parent.mkdir(exist_ok=True)
         data = {'host':'Blender','blender_version':bpy.app.version_string,'alive':self.link.alive,
                 'ticks':self.tick_count,'sections':len(self.renderer.sections),

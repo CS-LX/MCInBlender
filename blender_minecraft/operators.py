@@ -56,6 +56,11 @@ class Start(bpy.types.Operator):
         if package().SESSION:
             self.report({'WARNING'},'Host already running')
             return {'CANCELLED'}
+        import os
+        import platform
+        if os.name != 'nt' or platform.machine().lower() not in ('amd64', 'x86_64'):
+            self.report({'ERROR'}, 'This release supports Windows x64 only')
+            return {'CANCELLED'}
         from .host import Session
         try:
             package().SESSION = Session(context)
@@ -264,11 +269,15 @@ class Panel(bpy.types.Panel):
         session = package().SESSION
         if not session:
             layout.label(text='Blender is the game host',icon='WORLD')
+            layout.operator('mciblender.export_pack',icon='EXPORT')
             layout.operator('mciblender.demo')
             layout.prop(context.scene.mciblender,'spawn')
             layout.operator('mciblender.start',icon='PLAY')
         else:
             layout.label(text='Connected' if session.link.alive else 'Waiting for Minecraft',icon='LINKED')
+            if not session.link.alive:
+                layout.operator('mciblender.launch_minecraft',icon='PLAY')
+                layout.label(text='Or launch the imported pack yourself')
             layout.label(text=f'{len(session.renderer.sections)} mesh sections')
             layout.prop(context.scene.mciblender,'camera_view')
             layout.operator('mciblender.capture',icon='PLAY')
@@ -289,7 +298,7 @@ class Panel(bpy.types.Panel):
             layout.operator('mciblender.stop',icon='PAUSE')
             layout.operator('mciblender.quit_game',icon='QUIT')
             if session.errors:
-                layout.label(text='See logs/host-status.json',icon='ERROR')
+                layout.operator('mciblender.open_data',icon='ERROR')
 
 
 CLASSES = (Settings,Start,Stop,QuitGame,Capture,Command,Rebuild,EditScene,Demo,Panel)

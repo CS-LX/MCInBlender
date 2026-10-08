@@ -1,16 +1,15 @@
 """Explicit local test controls and viewport captures; no arbitrary code execution."""
 from .control_inbox import drain
+from .paths import data_root, controls_enabled
 from pathlib import Path
 import struct
 import zlib
 import gpu
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 def controls(session):
-    drain(ROOT/'.local'/'control', lambda data: dispatch(session, data))
+    if controls_enabled():
+        drain(data_root()/'.local'/'control', lambda data: dispatch(session, data))
 
 
 def dispatch(session, data):
@@ -42,7 +41,7 @@ def dispatch(session, data):
         session.capture_name = Path(data['name']).stem
     elif action == 'capture_window':
         import bpy
-        output = ROOT/'artifacts'/'captures'
+        output = data_root()/'artifacts'/'captures'
         output.mkdir(parents=True,exist_ok=True)
         bpy.ops.screen.screenshot(filepath=str(output/(Path(data['name']).stem+'.png')))
     elif action == 'teleport':
@@ -67,6 +66,6 @@ def capture(region, name):
         return struct.pack('>I',len(data))+tag+data+struct.pack('>I',zlib.crc32(tag+data)&0xFFFFFFFF)
     png = b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))
     png += chunk(b'IDAT',zlib.compress(b''.join(b'\0'+r for r in rows)))+chunk(b'IEND',b'')
-    output = ROOT/'artifacts'/'captures'
+    output = data_root()/'artifacts'/'captures'
     output.mkdir(parents=True,exist_ok=True)
     (output/(name+'.png')).write_bytes(png)

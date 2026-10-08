@@ -11,7 +11,7 @@ public final class Proto {
 	public static final int VERSION = 11;
 	// A second client on the same PC (multiplayer testing) talks to its own stand-in Skyrim:
 	// -Dskycraft.link=Local\SkyCraft_guest (see tools/fake_guest.py).
-	public static final String MAPPING_NAME = System.getProperty("skycraft.link", "Local\\SkyCraft_v1");
+	public static final String MAPPING_NAME = System.getProperty("skycraft.link", dev.skycraft.SkyCraft.BLENDER ? "Local\\MCInBlender_SkyCraft_v11" : "Local\\SkyCraft_v1");
 	public static final double UNITS_PER_BLOCK = 70.0;
 
 	public static final long OFF_HEADER = 0x0;

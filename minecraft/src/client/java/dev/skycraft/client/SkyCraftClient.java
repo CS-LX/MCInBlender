@@ -10,8 +10,8 @@ public final class SkyCraftClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		dev.skycraft.link.SkyLink.announceRunning();
-		if (!Boolean.getBoolean("mciblender.host")) DiscordPresence.start();
-		if (!Boolean.getBoolean("mciblender.host")) {
+		if (!dev.skycraft.SkyCraft.BLENDER) DiscordPresence.start();
+		if (!dev.skycraft.SkyCraft.BLENDER) {
 			DestructionToggle.register();
 		} else {
 			dev.skycraft.world.SkyDig.destruction = false;

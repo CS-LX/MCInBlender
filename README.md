@@ -6,7 +6,7 @@ Minecraft Java process supplies Minecraft's simulation, inventories, crafting,
 entities and UI. Minecraft meshes are drawn inside Blender's 3D viewport, alongside
 the user's scene. This is not a Minecraft host displaying Blender screenshots.
 
-**Status: playable developer prototype.** Native Blender ground collision,
+**Status: playable Windows Blender add-on with precompiled release packages.** Native Blender ground collision,
 Minecraft block interaction, crafting, containers, smelting, redstone, water flow,
 survival terrain, four camera choices, live Blender model collision, day/night
 lighting, precipitation, combat, enchanting and physical Nether portal travel have been
@@ -22,7 +22,23 @@ The `minecraft/` module is derived from [chasmlol/SkyCraft](https://github.com/c
 pinned at `bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32` (protocol 11).
 See `THIRD-PARTY-NOTICES.md` and `licenses/SkyCraft-MIT.txt`.
 
-## 在 Blender 里启动
+## 下载即用（无需编译）
+
+从 [Releases](https://github.com/CS-LX/MCInBlender/releases) 下载 `*-bundle.zip`：
+
+1. Blender → Edit → Preferences → Add-ons → Install from Disk，安装包内的 `*-addon.zip` 并启用。
+2. Prism/HMCL 导入包内 `.mrpack`；其他启动器创建 Minecraft 26.3 / Fabric 0.19.5 实例并复制包内 `mods/`。使用 Java 25。
+3. Blender 的 Minecraft 侧栏点击 **Start Blender Host**，再从启动器启动该实例，连接后 **Capture Input / Play**。
+
+支持 Steam 版 Blender 5.0+。Minecraft 本体、Java 和账号登录由启动器管理。
+插件保留原生模型、材质、修改器和自由视图；按 **Shift+Esc** 返回 Blender 编辑。
+
+[完整安装说明](docs/INSTALL.md) · [操作与模型融合](docs/USAGE.md) · [CI / 发布规则](docs/RELEASING.md)
+
+正式包文件名含 `-release-vX.X.X.X-`；主分支 CI 预览包含 `-ci-` 和短提交号，
+GitHub 标为 Prerelease。CI 仅构建 main 的提交或指向 main 历史的正式版本标签；PR 使用 squash 合并。
+
+## 开发者：从源码启动
 
 目前支持 Windows x64、Blender 5.0+、JDK 25，以及 Python 3.10+。
 首次构建还需要 GCC 或 Visual Studio 的 C++ Build Tools，用于编译共享内存原子操作的小型 DLL。
@@ -91,8 +107,8 @@ Minecraft 雾效仍未实现。现有用户灯光也会影响最终亮度。
 正常关闭 Blender 后，游戏也会在数秒内自动保存退出；模型文件仍按 Blender 的
 常规方式保存。开发时可加 `--keep-minecraft` 保留游戏进程，方便重启宿主和测试重连。
 
-当前启动器使用 Fabric 的 `runClient` 开发实例。它不读取个人启动器的账户或存档，
-也不是已完成的正版启动器/多人联机发行包。正式认证启动、安装包和更多玩法验证仍在进行。
+以上源码命令使用 Fabric 的 `runClient` 开发实例。普通用户请使用 Release 插件和整合包，
+由自己的启动器处理正版账号登录；开发测试存档不包含在发布包内。多人联机和第三方模组兼容性仍需进一步验证。
 
 ![Vanilla survival inventory in Blender](docs/images/survival-inventory.png)
 

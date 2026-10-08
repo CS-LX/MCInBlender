@@ -24,7 +24,7 @@ def build():
         # Paths are data supplied by the local VS installer. A batch file is required to retain
         # the compiler environment for the subsequent cl invocation.
         script = output/'build.cmd'
-        script.write_text(f'@echo off\ncall "{vcvars}"\nif errorlevel 1 exit /b 1\ncl /nologo /LD /O2 "{source}" /link /OUT:"{target}"\n')
+        script.write_text(f'@echo off\ncall "{vcvars}"\nif errorlevel 1 exit /b 1\ncl /nologo /LD /MT /O2 "{source}" /link /OUT:"{target}"\n')
         subprocess.run(['cmd','/d','/c',str(script)],cwd=output,check=True)
     return target
 
