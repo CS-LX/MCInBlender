@@ -11,6 +11,12 @@ User clarification: preserve both applications' capabilities, with Blender model
 entering the Minecraft gameplay scene. Editing Minecraft blocks as Blender meshes
 is explicitly not required. Provide first person, third person and Blender views.
 
+Delivery scope, 2026-10-09: the user requested wrapping up at the working prototype
+and stopping exhaustive checks of ordinary vanilla systems. The Blender host,
+native model collision/editing, four camera choices and representative gameplay
+have been exercised in real sessions. Remaining limitations below are disclosed
+future work; they are not claims that every Minecraft feature has been verified.
+
 ## Architecture
 
 - Blender window and modal operator receive all keyboard, pointer, text and UI input.
@@ -257,7 +263,7 @@ All 28 Python tests pass; the Fabric build and its 21 Java tests pass.
 
 ![A sword enchanted using Minecraft's menu inside Blender](images/enchanting-in-blender.png)
 
-## Remaining work
+## Known limitations and future work
 
 - More vanilla systems need end-to-end tests, including riding, trading, brewing,
   fishing and physical End portal travel. Tested combat/enchanting systems still
@@ -276,4 +282,5 @@ All 28 Python tests pass; the Fabric build and its 21 Java tests pass.
   distributable add-on/runtime packaging and install/update UX are unfinished.
 - Texture-pack/mod compatibility and non-Windows platforms are unverified.
 
-Do not mark the overall objective complete after this stage.
+This is a delivered developer prototype, not a production launcher or a guarantee
+of compatibility with every Minecraft feature, mod or hardware configuration.
