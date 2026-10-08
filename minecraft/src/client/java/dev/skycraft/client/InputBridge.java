@@ -69,6 +69,12 @@ public final class InputBridge {
 					minecraft.gui.setScreen(new PauseScreen(true));
 				}
 			}
+			case 9 -> {
+				if (Boolean.getBoolean("mciblender.host")) {
+					releaseAll();
+					minecraft.stop(); // Normal shutdown saves the integrated world before exiting.
+				}
+			}
 			default -> {
 			}
 		}

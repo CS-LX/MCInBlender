@@ -90,6 +90,9 @@ public final class SkyClient {
 			if (linked) {
 				tookOver = true;
 				unlinkedHold = null;
+				// A restarted Blender host has a fresh teleport sequence. Adopt it
+				// without moving a vanilla player to the new host's default spawn.
+				if (SkyCraft.VANILLA) lastPlayer = null;
 				SkyCollision.startConsumer();
 				applyLinkedOptions();
 			} else {
@@ -122,7 +125,23 @@ public final class SkyClient {
 		// A new player object means we just joined or respawned: put it where Skyrim's player is.
 		if (player != lastPlayer) {
 			lastPlayer = player;
-			teleportPending = true;
+			if (SkyCraft.VANILLA) {
+				// Minecraft owns natural spawn, respawn and portal destinations. Blender only
+				// requests a teleport when its explicit sequence changes afterwards.
+				holdPos = null;
+				teleportPending = false;
+				lastTeleportSeq = sky.teleportSeq;
+				teleportAck = sky.teleportSeq;
+			} else {
+				teleportPending = true;
+			}
+		}
+		if (SkyCraft.VANILLA && sky.teleportSeq == 0) {
+			// Zero is the Blender connection handshake, including Stop/Start within
+			// one Blender process. Only explicit, positive requests move the player.
+			lastTeleportSeq = 0;
+			teleportAck = 0;
+			teleportPending = false;
 		}
 		if (sky.teleportSeq != lastTeleportSeq) {
 			lastTeleportSeq = sky.teleportSeq;
@@ -255,6 +274,10 @@ public final class SkyClient {
 
 	/** Freeze the player until Skyrim's collision around them has arrived. */
 	private static void holdUntilReady(Minecraft minecraft) {
+		if (SkyCraft.VANILLA) {
+			holdPos = null;
+			return;
+		}
 		LocalPlayer player = minecraft.player;
 		if (!linked || player == null) {
 			return;
@@ -386,6 +409,7 @@ public final class SkyClient {
 		mc.guiScale = minecraft.getWindow().getGuiScale();
 		mc.frameCounter = ++frameCounter;
 		SkyLink.writeMcState(mc);
+		if (Boolean.getBoolean("mciblender.host")) BlenderEnvironment.send(minecraft);
 
 		if ((flags & Proto.MC_IN_WORLD) != 0) {
 			try {
@@ -395,8 +419,9 @@ public final class SkyClient {
 					SkyCraft.LOG.error("SkyCraft: world export failed", e);
 				}
 			}
-			FrameExporter.capture(minecraft);
 		}
+		// Menus, loading, death and world selection also belong in the Blender window.
+		FrameExporter.capture(minecraft);
 	}
 
 	/** End of the frame: render at most once per Skyrim frame instead of spinning freely. */

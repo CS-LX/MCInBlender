@@ -15,7 +15,8 @@ import org.slf4j.LoggerFactory;
 
 public final class SkyCraft implements ModInitializer {
 	public static final String MOD_ID = "skycraft";
-	public static final String WORLD_NAME = "SkyCraft";
+	public static final boolean VANILLA = Boolean.getBoolean("mciblender.vanilla");
+	public static final String WORLD_NAME = System.getProperty("mciblender.worldName", "MCInBlender");
 	public static final Logger LOG = LoggerFactory.getLogger(MOD_ID);
 	private static final String KIT2_TAG = "skycraft_builder_kit";
 
@@ -26,6 +27,7 @@ public final class SkyCraft implements ModInitializer {
 		dev.skycraft.world.SkyDig.init();
 		ServerLifecycleEvents.SERVER_STARTED.register(SkyCraft::configureServer);
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+			if (VANILLA) return;
 			giveStarterKit(handler.getPlayer());
 			giveBuilderKit(handler.getPlayer());
 			dressTestGuest(handler.getPlayer());
@@ -34,6 +36,7 @@ public final class SkyCraft implements ModInitializer {
 
 	/** The mirror world is a void that only exists to host the player; Skyrim drives time and spawning. */
 	private static void configureServer(MinecraftServer server) {
+		if (VANILLA) return; // Preserve actual survival rules, spawning, death, weather and day/night.
 		GameRules rules = server.getGameRules();
 		rules.set(GameRules.ADVANCE_TIME, false, server);
 		rules.set(GameRules.ADVANCE_WEATHER, false, server);

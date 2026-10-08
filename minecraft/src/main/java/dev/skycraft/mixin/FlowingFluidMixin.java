@@ -39,7 +39,7 @@ public abstract class FlowingFluidMixin {
 		if (!targetState.isAir() || !SkyCollision.active() || direction == Direction.UP) {
 			return;
 		}
-		if (!SkyCollision.isKnown(targetPos.getX(), targetPos.getY(), targetPos.getZ())) {
+		if (!dev.skycraft.SkyCraft.VANILLA && !SkyCollision.isKnown(targetPos.getX(), targetPos.getY(), targetPos.getZ())) {
 			refused("unknown region", direction, sourcePos, sourceState, targetPos, 0.0F);
 			cir.setReturnValue(false);
 			return;

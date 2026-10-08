@@ -16,7 +16,8 @@ import net.minecraft.world.level.levelgen.presets.WorldPreset;
 /** Opens (or creates) the void "mirror" world automatically once Skyrim is connected. */
 public final class MirrorWorld {
 	private static final ResourceKey<WorldPreset> PRESET =
-		ResourceKey.create(Registries.WORLD_PRESET, Identifier.fromNamespaceAndPath(SkyCraft.MOD_ID, "mirror"));
+		ResourceKey.create(Registries.WORLD_PRESET, SkyCraft.VANILLA ? Identifier.fromNamespaceAndPath("minecraft", "normal")
+			: Identifier.fromNamespaceAndPath(SkyCraft.MOD_ID, "mirror"));
 	private static boolean attempted;
 	private static long lastLog;
 	// /join: a friend's world for this session (the e4mc link their "Open to LAN" shows); null: our own.
@@ -159,7 +160,7 @@ public final class MirrorWorld {
 		minecraft.createWorldOpenFlows().createFreshLevel(
 			SkyCraft.WORLD_NAME,
 			settings,
-			new WorldOptions(0L, false, false),
+			new WorldOptions(Long.getLong("mciblender.seed", 0L), SkyCraft.VANILLA, false),
 			registries -> registries.lookupOrThrow(Registries.WORLD_PRESET).getOrThrow(PRESET).value().createWorldDimensions(),
 			title
 		);

@@ -23,8 +23,11 @@ loom {
 
 	runs {
 		client {
-			programArgs "--username", (System.getenv("SKYCRAFT_USERNAME") ?: "Dovahkiin")
-			vmArgs "--enable-native-access=ALL-UNNAMED", "-Dskycraft.quitWithSkyrim=false"
+			programArgs "--username", (System.getenv("SKYCRAFT_USERNAME") ?: "BlenderPlayer")
+			vmArgs "--enable-native-access=ALL-UNNAMED", "-Dskycraft.quitWithSkyrim=false",
+				"-Dskycraft.link=Local\\MCInBlender_SkyCraft_v11", "-Dskycraft.startHidden=true", "-Dmciblender.host=true",
+				"-Dmciblender.vanilla=" + (System.getenv("MCIBLENDER_WORLD") == "normal"),
+				"-Dmciblender.worldName=" + (System.getenv("MCIBLENDER_WORLD") == "normal" ? "MCInBlender Survival" : "MCInBlender")
 		}
 	}
 
@@ -45,7 +48,7 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 	// e4mc 6.2.2 (Fabric, 26.1-26.3): "Open to LAN" gives a link friends can join over the internet.
-	runtimeOnly "maven.modrinth:e4mc:AouleFRY"
+	// Internet sharing is opt-in; the Blender developer instance stays local by default.
 
 	testImplementation platform("org.junit:junit-bom:5.11.4")
 	testImplementation "org.junit.jupiter:junit-jupiter"

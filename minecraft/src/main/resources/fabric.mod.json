@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "skycraft",
   "version": "${version}",
-  "name": "SkyCraft",
-  "description": "Play Skyrim with Minecraft physics, inventory and viewmodels.",
-  "authors": ["chasmlol"],
+  "name": "MCInBlender — SkyCraft Bridge",
+  "description": "Minecraft simulation and geometry bridge for the Blender host; derived from SkyCraft.",
+  "authors": ["chasmlol", "CS-LX"],
   "contact": {
-    "sources": "https://github.com/chasmlol/SkyCraft"
+    "sources": "https://github.com/CS-LX/MCInBlender"
   },
   "license": "MIT",
   "environment": "client",
