@@ -22,6 +22,12 @@ def controls(session):
             session.link.input(data['kind'],data.get('code',0),data.get('a',0),data.get('b',0),data.get('c',0))
         elif action == 'look':
             session.yaw,session.pitch = data['yaw'],data['pitch']
+        elif action == 'settings':
+            allowed = {'frustum_culling','camera_view','show_minecraft'}
+            for name,value in data['values'].items():
+                if name not in allowed:
+                    raise ValueError(f'Unsupported diagnostic setting: {name}')
+                setattr(session.scene.mciblender,name,value)
         elif action == 'capture_input':
             import bpy
             with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):

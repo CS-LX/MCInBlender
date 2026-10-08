@@ -23,6 +23,12 @@ coordinates; avatar vertices are relative to the player.
 The Minecraft overlay uses three exclusive slots. The Blender reader exchanges
 its previously owned slot with the atomic middle slot before reading. Never read
 the writer's back buffer directly or replace the exchange with a plain store.
+While editing without a visible overlay, the host still consumes the newest
+shared frame but defers its GPU upload until the overlay is visible again.
+
+For Blender hosts, unloaded client sections are evicted using existing zero-count
+section/light/solid/dug messages. Full-ring sends retry before forgetting a key.
+Revisiting a chunk generates fresh meshes through Minecraft's normal load updates.
 
 ## Optional Blender extensions
 

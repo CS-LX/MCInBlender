@@ -42,7 +42,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only',choices=['blender','minecraft','build'])
     ap.add_argument('--test-input',action='store_true',help='Enable Blender event simulation for integration tests')
-    ap.add_argument('--verification',choices=['fusion'],help='Run Blender scene integration checks in an isolated instance')
+    ap.add_argument('--verification',choices=['fusion','performance'],help='Run Blender integration checks in an isolated instance')
     ap.add_argument('--world',choices=['scene','normal'],default='scene')
     ap.add_argument('--blend',type=Path,help='Use models from this .blend file as the host scene')
     args = ap.parse_args()
@@ -64,7 +64,7 @@ def main():
     process_file = local/'processes.json'
     processes = json.loads(process_file.read_text()) if process_file.exists() else {}
     if args.only in (None,'blender'):
-        script = ROOT/'scripts'/('verify_fusion_in_blender.py' if args.verification == 'fusion' else 'bootstrap_blender.py')
+        script = ROOT/'scripts'/(f'verify_{args.verification}_in_blender.py' if args.verification else 'bootstrap_blender.py')
         out = open(logs/'blender.log','w',encoding='utf8')
         env = os.environ.copy()
         env['MCIBLENDER_WORLD'] = args.world

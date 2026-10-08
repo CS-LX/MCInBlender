@@ -241,9 +241,11 @@ class Session:
             return
         try:
             if self.scene.mciblender.show_minecraft:
-                self.renderer.draw_world(bpy.context,self.player,show_selection=self.follow_camera)
+                self.renderer.draw_world(bpy.context,self.player,show_selection=self.follow_camera,
+                                         culling=self.scene.mciblender.frustum_culling,
+                                         upload_overlay=self.follow_camera or self.captured)
             else:
-                self.renderer.flush()
+                self.renderer.flush(upload_overlay=self.follow_camera or self.captured)
         except Exception as exc:
             self.error(exc)
 
@@ -290,6 +292,10 @@ class Session:
         data['editor_mode'] = not self.follow_camera
         data['camera_view'] = self.scene.mciblender.camera_view
         data['collision_rebuilds'] = self.collision_rebuilds
+        data['performance'] = self.renderer.profile()
+        keys = self.renderer.sections.keys()
+        data['section_extent'] = [[min(k[i] for k in keys),max(k[i] for k in keys)] for i in range(3)] if keys else None
+        data['section_records'] = {'lights':len(self.renderer.lights),'solids':len(self.renderer.solids),'dug':len(self.renderer.dug)}
         data['entity_kinds'] = dict(__import__('collections').Counter(struct.unpack_from('<I',r)[0] for r in self.renderer.entity_records))
         temp = target.with_suffix('.tmp')
         temp.write_text(json.dumps(data,indent=2),encoding='utf8')

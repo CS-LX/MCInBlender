@@ -2,7 +2,7 @@
 import struct
 import time
 import json
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 import numpy as np
 import bpy
 import gpu
@@ -47,6 +47,10 @@ class ViewportRenderer:
         self.textures = {}
         self.texture_pixels = {}
         self.sections = {}
+        self.section_bounds = {}
+        self.bounds_dirty = True
+        self.section_keys = ()
+        self.bounds_centers = self.bounds_sizes = np.empty((0,3),dtype=np.float32)
         self.dynamic = {}
         self.pending = OrderedDict()
         self.atlas_patches = []
@@ -61,11 +65,15 @@ class ViewportRenderer:
         self.entity_records = []
         self.entity_batches = []
         self.environment = {}
+        self.performance = {}
+        self.frame_samples = deque(maxlen=180)
 
     def accept(self, kind, payload):
         self.counts[kind] += 1
         if kind == 3:
             self.sections.clear()
+            self.section_bounds.clear()
+            self.bounds_dirty = True
             self.dynamic.clear()
             self.pending.clear()
             self.solids.clear()
@@ -124,9 +132,16 @@ class ViewportRenderer:
                 batch = batch_for_shader(self.shader,'TRIS',{
                     'position':pos[indices], 'uv':vertices['uv'][indices], 'color':color[indices]})
                 result.append((tex,translucent,batch))
-        return P.mc_to_blender(origin),result
+        offset = np.asarray(P.mc_to_blender(origin),dtype=np.float32)
+        if len(pos):
+            low,high = pos.min(axis=0),pos.max(axis=0)
+            bounds = ((low+high)/2+offset,(high-low)/2)
+        else:
+            bounds = (offset,np.zeros(3,dtype=np.float32))
+        return tuple(offset),result,bounds
 
-    def flush(self, budget_ms=10):
+    def flush(self, budget_ms=10, upload_overlay=True):
+        flush_start = time.perf_counter()
         if self.shader is None:
             self.shader = make_shader()
         deadline = time.perf_counter()+budget_ms/1000
@@ -137,6 +152,7 @@ class ViewportRenderer:
                 ident,w,h,pixels = P.texture_payload(kind,payload)
                 self.texture_pixels[ident] = (w,h,bytearray(pixels))
                 self.textures[ident] = texture(w,h,pixels)
+        atlas_start = time.perf_counter()
         if self.atlas_patches and 0 in self.texture_pixels:
             w,h,pixels = self.texture_pixels[0]
             patches = {struct.unpack_from('<II',p):p for p in self.atlas_patches}
@@ -147,19 +163,26 @@ class ViewportRenderer:
                 for row in range(ph):
                     begin = ((y+row)*w+x)*4
                     pixels[begin:begin+pw*4] = p[16+row*pw*4:16+(row+1)*pw*4]
-                self.patch_atlas(x,y,pw,ph,p[16:])
+            self.patch_atlas_batch(list(patches.values()))
             self.atlas_patches.clear()
+        self.performance['atlas_ms'] = (time.perf_counter()-atlas_start)*1000
+        mesh_start = time.perf_counter()
         while self.pending and time.perf_counter()<deadline:
             key,(kind,payload) = self.pending.popitem(last=False)
             result = self.create_batches(kind,payload)
             if kind == 2:
                 if result[1]:
-                    self.sections[key[1:]] = result
+                    self.sections[key[1:]] = result[:2]
+                    self.section_bounds[key[1:]] = result[2]
                 else:
                     self.sections.pop(key[1:],None)
+                    self.section_bounds.pop(key[1:],None)
+                self.bounds_dirty = True
             else:
-                self.dynamic[kind] = result
-        if self.overlay_pending:
+                self.dynamic[kind] = result[:2]
+        self.performance['mesh_upload_ms'] = (time.perf_counter()-mesh_start)*1000
+        overlay_start = time.perf_counter()
+        if self.overlay_pending and upload_overlay:
             w,h,flags,frame,pixels = self.overlay_pending
             if not flags & 1:
                 pixels = np.frombuffer(pixels,dtype=np.uint8).reshape(h,w,4)[::-1].copy().tobytes()
@@ -167,6 +190,7 @@ class ViewportRenderer:
             self.overlay_frame = frame
             self.overlay_size = (w,h)
             self.overlay_pending = None
+        self.performance['overlay_upload_ms'] = (time.perf_counter()-overlay_start)*1000
         from .entity_geometry import build
         pos,uv,color,solid = build(self.entity_records)
         self.entity_batches = []
@@ -174,15 +198,18 @@ class ViewportRenderer:
             if b>a:
                 batch = batch_for_shader(self.shader,'TRIS',{'position':pos[a:b],'uv':uv[a:b],'color':color[a:b]})
                 self.entity_batches.append((0,translucent,batch))
+        self.performance['flush_ms'] = (time.perf_counter()-flush_start)*1000
 
-    def patch_atlas(self, x, y, width, height, pixels):
+    def patch_atlas_batch(self, patches):
+        from .atlas_upload import pack_patches
         atlas = self.textures[0]
-        patch = texture(width,height,pixels)
+        sheet,positions,uvs = pack_patches(patches,atlas.width,atlas.height)
+        if sheet is None:
+            return
+        height,width = sheet.shape[:2]
+        patch = texture(width,height,sheet.tobytes())
         shader = gpu.shader.from_builtin('IMAGE')
-        x0,y0 = 2*x/atlas.width-1,2*y/atlas.height-1
-        x1,y1 = 2*(x+width)/atlas.width-1,2*(y+height)/atlas.height-1
-        batch = batch_for_shader(shader,'TRI_FAN',{'pos':[(x0,y0),(x1,y0),(x1,y1),(x0,y1)],
-                                                'texCoord':[(0,0),(1,0),(1,1),(0,1)]})
+        batch = batch_for_shader(shader,'TRIS',{'pos':positions,'texCoord':uvs})
         viewport = gpu.state.viewport_get()
         blend,depth,mask = gpu.state.blend_get(),gpu.state.depth_test_get(),gpu.state.depth_mask_get()
         frame = gpu.types.GPUFrameBuffer(color_slots=atlas)
@@ -203,8 +230,11 @@ class ViewportRenderer:
             gpu.state.depth_test_set(depth)
             gpu.state.depth_mask_set(mask)
 
-    def draw_world(self, context, player, show_selection=True):
-        self.flush()
+    def draw_world(self, context, player, show_selection=True, culling=True, upload_overlay=True):
+        frame_start = time.perf_counter()
+        draw_calls = 0
+        visible_sections = 0
+        self.flush(upload_overlay=upload_overlay)
         if not self.shader or not player or not player.in_world:
             return
         blend,depth,mask = gpu.state.blend_get(),gpu.state.depth_test_get(),gpu.state.depth_mask_get()
@@ -212,7 +242,18 @@ class ViewportRenderer:
             gpu.state.depth_test_set('LESS_EQUAL')
             self.shader.bind()
             transform = context.region_data.perspective_matrix
-            groups = list(self.sections.values())
+            if self.bounds_dirty:
+                self.section_keys = tuple(self.section_bounds)
+                self.bounds_centers = np.asarray([self.section_bounds[k][0] for k in self.section_keys],dtype=np.float32).reshape(-1,3)
+                self.bounds_sizes = np.asarray([self.section_bounds[k][1] for k in self.section_keys],dtype=np.float32).reshape(-1,3)
+                self.bounds_dirty = False
+            if culling:
+                from .visibility import visible_bounds
+                mask_visible = visible_bounds(self.bounds_centers,self.bounds_sizes,transform)
+                groups = [self.sections[self.section_keys[i]] for i in np.flatnonzero(mask_visible)]
+            else:
+                groups = list(self.sections.values())
+            visible_sections = len(groups)
             if self.entity_batches:
                 groups.append(((0,0,0),self.entity_batches))
             if 6 in self.dynamic:
@@ -224,7 +265,7 @@ class ViewportRenderer:
                 gpu.state.depth_mask_set(not translucent)
                 # Sort section-level transparent geometry back to front.
                 if translucent and player:
-                    eye = Vector(P.mc_to_blender(player.eye))
+                    eye = context.region_data.view_matrix.inverted().translation
                     groups.sort(key=lambda g:(Vector(g[0])-eye).length_squared,reverse=True)
                 for origin,batches in groups:
                     self.shader.uniform_float('transform',transform @ Matrix.Translation(origin))
@@ -233,12 +274,26 @@ class ViewportRenderer:
                             continue
                         self.shader.uniform_sampler('atlas',self.textures[tex])
                         batch.draw(self.shader)
+                        draw_calls += 1
             if show_selection:
                 self.draw_selection(context)
         finally:
             gpu.state.blend_set(blend)
             gpu.state.depth_test_set(depth)
             gpu.state.depth_mask_set(mask)
+            self.performance.update(draw_calls=draw_calls,visible_sections=visible_sections,cached_sections=len(self.sections))
+            self.frame_samples.append((time.perf_counter(),(time.perf_counter()-frame_start)*1000,self.performance.copy()))
+
+    def profile(self):
+        if len(self.frame_samples)<2:
+            return self.performance.copy()
+        duration = self.frame_samples[-1][0]-self.frame_samples[0][0]
+        result = {key:round(sum(p[2].get(key,0) for p in self.frame_samples)/len(self.frame_samples),3)
+                  for key in self.performance}
+        result['draw_total_ms'] = round(sum(p[1] for p in self.frame_samples)/len(self.frame_samples),3)
+        result['viewport_fps'] = round((len(self.frame_samples)-1)/max(duration,0.001),2)
+        result['pending_meshes'] = len(self.pending)
+        return result
 
     def draw_selection(self, context):
         if self.selection is None:

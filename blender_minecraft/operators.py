@@ -34,6 +34,7 @@ class Settings(bpy.types.PropertyGroup):
     command: StringProperty(name='Minecraft command',default='gamemode creative')
     live_collision: BoolProperty(name='Live Blender collision',default=True)
     show_minecraft: BoolProperty(name='Show live Minecraft world',default=True)
+    frustum_culling: BoolProperty(name='Cull offscreen Minecraft sections',default=True)
     camera_view: EnumProperty(name='View',items=[('FIRST','First Person','Minecraft first person'),
         ('THIRD_BACK','Third Person — Behind','Follow the player from behind'),
         ('THIRD_FRONT','Third Person — Front','Face the player'),

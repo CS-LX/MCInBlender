@@ -73,6 +73,7 @@ public final class WorldExporter {
 	private static final ByteBuffer LIGHTS = ByteBuffer.allocate(16 * 16 * 16 * 8).order(ByteOrder.LITTLE_ENDIAN);
 	private static int sentGeneration = Integer.MIN_VALUE;
 	private static int meshesSent;
+	private static long nextPrune;
 	private static ClientLevel sentLevel;
 	private static SkyAtlas atlas;
 	private static ModelBlockRenderer blockRenderer;
@@ -109,6 +110,10 @@ public final class WorldExporter {
 			resendEverything(minecraft, level);
 		}
 		meshDirtySections(level);
+		if (Boolean.getBoolean("mciblender.host") && System.nanoTime() >= nextPrune) {
+			nextPrune = System.nanoTime() + 1_000_000_000L;
+			pruneUnloaded(level);
+		}
 		// Animated textures (water, lava, fire, ...): the frame for this game tick.
 		atlas.animate(level.getGameTime(), region -> {
 			ByteBuffer header = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN).putInt(region.x()).putInt(region.y()).putInt(region.w()).putInt(region.h()).flip();
@@ -137,6 +142,10 @@ public final class WorldExporter {
 		LIT.clear();
 		SOLID.clear();
 		DUG.clear();
+		synchronized (DIRTY) {
+			DIRTY.clear();
+		}
+		nextPrune = 0;
 		dev.skycraft.client.SkyDigClient.resendAll();
 		// Everything already loaded needs meshing again; later chunk loads mark themselves dirty.
 		int radius = minecraft.options.getEffectiveRenderDistance() + 1;
@@ -174,6 +183,33 @@ public final class WorldExporter {
 				meshed++;
 			}
 		}
+	}
+
+	/** Blender follows the client's loaded chunks; revisiting a chunk exports fresh geometry. */
+	private static void pruneUnloaded(ClientLevel level) {
+		LongOpenHashSet keys = new LongOpenHashSet(SENT);
+		keys.addAll(LIT);
+		keys.addAll(SOLID);
+		keys.addAll(DUG);
+		java.util.Map<Long, Boolean> loaded = new java.util.HashMap<>();
+		for (long key : keys) {
+			int sx = SectionPos.x(key), sz = SectionPos.z(key);
+			long column = ((long) sx << 32) ^ (sz & 0xffffffffL);
+			if (loaded.computeIfAbsent(column, k -> level.getChunkSource().getChunk(sx, sz, ChunkStatus.FULL, false) != null)) continue;
+			removeRecord(key, SENT, Proto.REN_SECTION);
+			removeRecord(key, LIT, Proto.REN_LIGHTS);
+			removeRecord(key, SOLID, Proto.REN_SOLIDS);
+			removeRecord(key, DUG, Proto.REN_DUG);
+		}
+	}
+
+	private static void removeRecord(long key, LongOpenHashSet retained, int kind) {
+		if (!retained.contains(key)) return;
+		ByteBuffer header = ByteBuffer.allocate(kind == Proto.REN_DUG ? 24 : 16).order(ByteOrder.LITTLE_ENDIAN)
+			.putInt(SectionPos.x(key)).putInt(SectionPos.y(key)).putInt(SectionPos.z(key)).putInt(0);
+		if (kind == Proto.REN_DUG) header.putInt(dev.skycraft.client.SkyDigClient.world()).putInt(0);
+		// Retain the key until delivery succeeds so a full render ring retries next pass.
+		if (SkyLink.tryWriteRender(kind, header.flip(), null)) retained.remove(key);
 	}
 
 	private static LevelChunkSection sectionAt(ClientLevel level, LevelChunk chunk, int sy) {

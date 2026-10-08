@@ -49,7 +49,7 @@ NVIDIA OpenGL. Tests use isolated development saves under `minecraft/run/`.
 
 | Evidence | Result |
 | --- | --- |
-| Python wire protocol, startup handshake, buffer ownership/backpressure, geometry tests | 12 passed |
+| Python wire protocol, startup handshake, buffer ownership/backpressure, geometry, culling and atlas tests | 19 passed |
 | Fabric bridge build and inherited Java collision tests | Successful; 21 tests |
 | Native Blender floor walking | Player moved 1.72 blocks without falling through the floor |
 | Place/break block on Blender ground | Real section updates and visible edits, both passed |
@@ -115,13 +115,45 @@ Local results: `artifacts/gameplay-tests.json`, `artifacts/fusion/tests.json`.
 The fusion tests save an ordinary Blender model scene in `artifacts/fusion/`.
 They do not bake or edit Minecraft geometry.
 
+## Stage 3 — Viewport rendering performance
+
+- Reject off-screen section bounds using the actual Blender perspective or
+  orthographic view. Geometry crossing the near plane or screen edge remains.
+- Sort transparent sections from the Blender camera, including free editor views.
+- Pack animated atlas tiles into one texture upload and GPU draw per batch.
+- Defer hidden HUD uploads while editing; the newest overlay resumes on capture.
+- Evict meshes and companion records when Minecraft unloads a client chunk;
+  successful delivery is required before forgetting an eviction.
+- Diagnostics include draw timing, frame rate, draw calls and retained sections.
+
+The same saved scene and free Blender perspective view held 2,573 mesh sections.
+The HUD was hidden in this editing view. Before these
+changes, the local session averaged 17.79 FPS with 2,988 draw calls. After the
+changes it averaged 58.56 FPS with 868 draw calls and 735 visible sections.
+The optimized renderer with culling disabled averaged 24.16 FPS. These are
+short local samples, not a general hardware benchmark. The player and camera
+were stationary; mobs and the Minecraft simulation remained active.
+
+`scripts/verify_performance_in_blender.py` checks GPU results, then collects A/B
+timing in the same running scene. Perspective and orthographic culling produced
+exactly the same rendered RGBA pixels as drawing all sections. A separate GPU
+readback verified all animated tile pixels and untouched atlas pixels. All five
+checks/samples completed without errors. Local results: `artifacts/performance/`.
+
+`scripts/verify_streaming.py` moved the player to x=1040, x=-1040 and back to the
+original arena. Old mesh extents disappeared at each destination and return
+loading rebuilt the original 2,573 sections. HUD upload resumed after free editing,
+and real Blender input opened/closed Minecraft's inventory. All four checks passed
+with no host errors; this is a travel regression, not a long-duration memory test.
+
 ## Remaining work
 
 - Combat, physical portal traversal, enchantment and more vanilla systems need
   end-to-end tests; tested systems still need broader item/recipe/block coverage.
 - Sky, weather, fog, night lighting, some special entity effects and sound routing
   need host-specific presentation. Audio currently comes from Minecraft.
-- Section culling/eviction, performance and long-session memory require work.
+- Broader hardware benchmarks, GPU texture upload cost during play, and long-session
+  memory profiling require more work.
 - Fast animated Blender objects, riding moving platforms, Blender actor damage,
   destruction, host water and light integration are incomplete.
   Light/solid/dug protocol messages are currently retained only.

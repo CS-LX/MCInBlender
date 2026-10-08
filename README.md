@@ -108,6 +108,12 @@ python scripts/verify_gameplay.py
 
 # Restart only the Blender host to test live modeling and four camera choices
 python scripts/launch.py --only blender --world normal --verification fusion --test-input
+
+# GPU pixel checks and same-camera culling timings using an existing model scene
+python scripts/launch.py --only blender --world normal --blend "C:/Projects/My Scene.blend" --verification performance
+
+# Travel beyond render distance and back, then exercise the real inventory UI
+python scripts/verify_streaming.py
 ```
 
 Run one developer session at a time. The live tests change the isolated development
