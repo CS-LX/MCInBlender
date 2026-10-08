@@ -1,5 +1,5 @@
 """Explicit local test controls and viewport captures; no arbitrary code execution."""
-import json
+from .control_inbox import drain
 from pathlib import Path
 import struct
 import zlib
@@ -10,53 +10,51 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def controls(session):
-    inbox = ROOT/'.local'/'control'
-    if not inbox.exists():
-        return
-    for path in sorted(inbox.glob('*.json')):
-        data = json.loads(path.read_text(encoding='utf8'))
-        action = data['action']
-        if action == 'command':
-            session.command(data['text'])
-        elif action == 'input':
-            session.link.input(data['kind'],data.get('code',0),data.get('a',0),data.get('b',0),data.get('c',0))
-        elif action == 'look':
-            session.yaw,session.pitch = data['yaw'],data['pitch']
-        elif action == 'settings':
-            allowed = {'frustum_culling','camera_view','show_minecraft','environment',
-                       'native_lighting','native_sky_strength','native_block_strength','native_light_limit'}
-            for name,value in data['values'].items():
-                if name not in allowed:
-                    raise ValueError(f'Unsupported diagnostic setting: {name}')
-                setattr(session.scene.mciblender,name,value)
-        elif action == 'capture_input':
-            import bpy
-            with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):
-                bpy.ops.mciblender.capture('INVOKE_DEFAULT')
-        elif action == 'quit_game':
-            import bpy
-            with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):
-                bpy.ops.mciblender.quit_game()
-        elif action == 'blender_event':
-            session.window.event_simulate(**data['event'])
-        elif action == 'capture':
-            session.capture_name = Path(data['name']).stem
-        elif action == 'capture_window':
-            import bpy
-            output = ROOT/'artifacts'/'captures'
-            output.mkdir(parents=True,exist_ok=True)
-            bpy.ops.screen.screenshot(filepath=str(output/(Path(data['name']).stem+'.png')))
-        elif action == 'teleport':
-            session.position = tuple(data['position'])
-            session.requested_position = session.position
-            session.teleport += 1
-        elif action == 'shutdown':
-            import bpy
-            session.close()
-            bpy.ops.wm.quit_blender()
-        else:
-            raise ValueError(f'Unknown diagnostic action: {action}')
-        path.unlink()
+    drain(ROOT/'.local'/'control', lambda data: dispatch(session, data))
+
+
+def dispatch(session, data):
+    action = data['action']
+    if action == 'command':
+        session.command(data['text'])
+    elif action == 'input':
+        session.link.input(data['kind'],data.get('code',0),data.get('a',0),data.get('b',0),data.get('c',0))
+    elif action == 'look':
+        session.yaw,session.pitch = data['yaw'],data['pitch']
+    elif action == 'settings':
+        allowed = {'frustum_culling','camera_view','show_minecraft','environment',
+                   'native_lighting','native_sky_strength','native_block_strength','native_light_limit'}
+        for name,value in data['values'].items():
+            if name not in allowed:
+                raise ValueError(f'Unsupported diagnostic setting: {name}')
+            setattr(session.scene.mciblender,name,value)
+    elif action == 'capture_input':
+        import bpy
+        with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):
+            bpy.ops.mciblender.capture('INVOKE_DEFAULT')
+    elif action == 'quit_game':
+        import bpy
+        with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):
+            bpy.ops.mciblender.quit_game()
+    elif action == 'blender_event':
+        session.window.event_simulate(**data['event'])
+    elif action == 'capture':
+        session.capture_name = Path(data['name']).stem
+    elif action == 'capture_window':
+        import bpy
+        output = ROOT/'artifacts'/'captures'
+        output.mkdir(parents=True,exist_ok=True)
+        bpy.ops.screen.screenshot(filepath=str(output/(Path(data['name']).stem+'.png')))
+    elif action == 'teleport':
+        session.position = tuple(data['position'])
+        session.requested_position = session.position
+        session.teleport += 1
+    elif action == 'shutdown':
+        import bpy
+        session.close()
+        bpy.ops.wm.quit_blender()
+    else:
+        raise ValueError(f'Unknown diagnostic action: {action}')
 
 
 def capture(region, name):

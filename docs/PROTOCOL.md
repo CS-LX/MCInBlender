@@ -64,8 +64,30 @@ The host projects them using the actual Blender view. Lightmap readback is
 asynchronous and generation-checked. Environment PNGs come from the installed
 game/resource pack at runtime; none are stored in this repository.
 
+Additional read-only record 12 fields support gameplay verification:
+
+- `targetEntity`: numeric runtime id, UUID and registry type; living targets also
+  include health and maximum health. Absent when the crosshair targets no entity.
+- `heldStack`: item, count, enchanted flag and durability damage. The same
+  stack fields accompany container/carried stacks. `enchanted` reports
+  `ItemStack.isEnchanted()`; it is not an exported enchantment list.
+- `feetBlock`: the block state at the player's feet, including portal axis.
+- `enchantmentOffers`: menu indices, required levels, numeric registry clue ids
+  and clue levels while an enchantment menu is open. These are session data,
+  not a stable cross-version enchantment registry.
+
+These fields observe ordinary Minecraft state; they do not perform attacks,
+enchant items or change dimensions. The integration driver uses Blender input
+for those actions and server command responses to verify the result.
+
 The development diagnostics inbox `.local/control/` accepts specific JSON actions
 only. It is not a general Python executor. `blender_event` uses Blender's own
 event simulation and requires launching Blender with `--enable-event-simulate`.
 Use `scripts/control.py` to enqueue diagnostic actions; normal users play through
 the add-on's modal operator.
+Producers publish complete files using a temporary file and atomic rename. The
+consumer processes sorted JSON names and waits on transient Windows sharing
+violations to preserve input order. It renames an action to `.claimed` before
+dispatch and later removes that file. Failed cleanup never replays an action;
+after a crash, claimed actions are discarded because their outcome is unknown.
+This diagnostic queue provides at-most-once dispatch, not crash-safe delivery.

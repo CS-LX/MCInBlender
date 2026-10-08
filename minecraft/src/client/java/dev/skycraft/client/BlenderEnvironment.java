@@ -9,8 +9,11 @@ import java.nio.charset.StandardCharsets;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.inventory.EnchantmentMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import dev.skycraft.client.mixin.ContainerScreenAccessor;
 import org.joml.Vector3fc;
@@ -95,12 +98,26 @@ public final class BlenderEnvironment {
                 target.addProperty("state", mc.level.getBlockState(pos).toString());
                 info.add("targetBlock", target);
             }
+            if (mc.hitResult instanceof EntityHitResult hit) {
+                var entity = hit.getEntity();
+                JsonObject target = new JsonObject();
+                target.addProperty("id", entity.getId());
+                target.addProperty("type", net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
+                target.addProperty("uuid", entity.getUUID().toString());
+                if (entity instanceof LivingEntity living) {
+                    target.addProperty("health", living.getHealth());
+                    target.addProperty("maxHealth", living.getMaxHealth());
+                }
+                info.add("targetEntity", target);
+            }
         }
         if (mc.player != null) {
             info.addProperty("health", mc.player.getHealth());
             info.addProperty("food", mc.player.getFoodData().getFoodLevel());
             info.addProperty("experience", mc.player.experienceLevel);
             info.addProperty("heldItem", mc.player.getMainHandItem().getItem().toString());
+            info.add("heldStack", stackInfo(mc.player.getMainHandItem()));
+            info.addProperty("feetBlock", mc.player.level().getBlockState(mc.player.blockPosition()).toString());
             JsonObject inventory = new JsonObject();
             for (int i = 0; i < mc.player.getInventory().getContainerSize(); i++) {
                 ItemStack stack = mc.player.getInventory().getItem(i);
@@ -128,6 +145,18 @@ public final class BlenderEnvironment {
                 slots.add(entry);
             }
             info.add("menuSlots", slots);
+            if (screen.getMenu() instanceof EnchantmentMenu menu) {
+                JsonArray offers = new JsonArray();
+                for (int i = 0; i < menu.costs.length; i++) {
+                    JsonObject offer = new JsonObject();
+                    offer.addProperty("index", i);
+                    offer.addProperty("requiredLevel", menu.costs[i]);
+                    offer.addProperty("enchantmentId", menu.enchantClue[i]);
+                    offer.addProperty("enchantmentLevel", menu.levelClue[i]);
+                    offers.add(offer);
+                }
+                info.add("enchantmentOffers", offers);
+            }
         }
         if (mc.gameMode != null) info.addProperty("gameMode", mc.gameMode.getPlayerMode().getName());
         SkyLink.tryWriteRender(12, ByteBuffer.wrap(info.toString().getBytes(StandardCharsets.UTF_8)), null);
@@ -170,6 +199,8 @@ public final class BlenderEnvironment {
         JsonObject info = new JsonObject();
         info.addProperty("item", stack.getItem().toString());
         info.addProperty("count", stack.getCount());
+        info.addProperty("enchanted", stack.isEnchanted());
+        info.addProperty("damage", stack.getDamageValue());
         return info;
     }
 }

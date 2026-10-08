@@ -9,7 +9,7 @@ the user's scene. This is not a Minecraft host displaying Blender screenshots.
 **Status: playable developer prototype.** Native Blender ground collision,
 Minecraft block interaction, crafting, containers, smelting, redstone, water flow,
 survival terrain, four camera choices, live Blender model collision, day/night
-lighting and precipitation have been
+lighting, precipitation, combat, enchanting and physical Nether portal travel have been
 tested in a real Blender + Minecraft session. See [verified features and gaps](docs/STATUS.md).
 
 ![Minecraft geometry, mobs and HUD inside a native Blender scene](docs/images/blender-native-world.png)
@@ -126,6 +126,9 @@ python scripts/verify_survival.py
 
 # Crafting, containers, smelting, redstone and water through real Blender input
 python scripts/verify_gameplay.py
+
+# Melee, bow, hostile damage, enchanting and walking through Nether portals
+python scripts/verify_adventure.py
 
 # Restart only the Blender host to test live modeling and four camera choices
 python scripts/launch.py --only blender --world normal --verification fusion --test-input

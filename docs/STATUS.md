@@ -68,7 +68,7 @@ Live tests: `scripts/verify_runtime.py` and `scripts/verify_survival.py`.
 The restart regression is `scripts/verify_reconnect.py` (normal mode).
 Machine-generated local records: `artifacts/runtime-tests.json` and
 `artifacts/survival-tests.json`. Only selected screenshots are committed.
-Dimension tests use normal commands, not portal traversal. Block placement tests
+Stage 1 dimension tests use commands; Stage 6 adds physical Nether portal traversal. Block placement tests
 check mesh changes and visible behavior, not every block type. Protocol tests
 exercise real Windows shared memory under separate test mapping names.
 
@@ -222,10 +222,46 @@ The same-process reconnect restored the complete 2,573-section arena and texture
 atlas after initially exposing a missing-resend bug. All 23 Python tests and the
 Java build's 21 tests passed. Native light occlusion limitations above remain.
 
+## Stage 6 — Combat, enchanting and physical portal travel
+
+The new `scripts/verify_adventure.py` driver uses Blender's modal keyboard and
+mouse events for attacks, item use, enchanting UI and walking through portals.
+Commands prepare an isolated arena/inventory and read server evidence. They do
+not perform the tested attacks, enchant the sword or change dimensions.
+
+| Check | Real-session evidence |
+| --- | --- |
+| Sword melee | Cow health 10 → 3 after one click; a second click killed it |
+| Bow | Actual draw/release consumed one arrow; golem health 100 → 92 |
+| Hostile damage | An active zombie reduced the player's health from 20 to 14 |
+| Enchanting | Shift-clicked sword/lapis into the table, clicked an offer; XP 30 → 29, lapis 3 → 2; server inventory confirmed Sharpness I |
+| Nether portal | Right-clicked flint and steel, walked into the lit frame, arrived in the Nether at `(9,84,24.5)` |
+| Return portal | Walked outside the generated portal, waited for its real cooldown, walked back in and returned to `(64,100,70.5)` in the Overworld |
+
+Both physical dimension transitions cleared the previous world geometry and
+loaded destination sections. The driver prepares a safe walkway at the generated
+Nether portal before testing return travel. This is not an unmodified wilderness
+survival run. All six driver records, including fixture preparation, passed with
+no host errors. Reports and screenshots are under `artifacts/adventure-tests.json`
+and `artifacts/captures/adventure-*`.
+
+Read-only environment diagnostics now expose the targeted entity, held stack
+enchantment/damage state, block at the player's feet and enchantment-menu offers.
+They observe Minecraft; normal input still performs gameplay.
+
+Repeated testing exposed an intermittent Windows sharing violation in the local
+diagnostic inbox. The consumer now waits without reordering queued press/release
+events and claims each file before dispatch. A locked cleanup cannot replay the
+action. Five new tests cover read/claim/cleanup locks and malformed/failed actions.
+All 28 Python tests pass; the Fabric build and its 21 Java tests pass.
+
+![A sword enchanted using Minecraft's menu inside Blender](images/enchanting-in-blender.png)
+
 ## Remaining work
 
-- Combat, physical portal traversal, enchantment and more vanilla systems need
-  end-to-end tests; tested systems still need broader item/recipe/block coverage.
+- More vanilla systems need end-to-end tests, including riding, trading, brewing,
+  fishing and physical End portal travel. Tested combat/enchanting systems still
+  need broader weapon, enchantment, entity, recipe and block coverage.
 - Clouds, exact vanilla star/End-sky presentation, some special entity effects
   and sound routing need more work. Audio currently comes from Minecraft.
 - Native light occlusion by Minecraft blocks, Minecraft fog on native models and
