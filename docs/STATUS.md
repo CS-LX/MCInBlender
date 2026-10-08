@@ -181,20 +181,61 @@ Drivers: `scripts/verify_environment.py` and
 `scripts/verify_lifecycle_in_blender.py`; local results are in
 `artifacts/environment-tests.json` and `artifacts/lifecycle/`.
 
+## Stage 5 — Minecraft lights on native Blender models
+
+- Optional native lighting uses Material Preview and a temporary collection of
+  Blender sun/point lights. Daylight/moonlight follow the actual game palette and
+  celestial angles; nearby block emitters update when blocks change or unload.
+- Default cap: 32 emitting blocks reaching the bounds of up to 64 visible native
+  models nearest the viewport camera. Strengths and cap are adjustable. Updates
+  run at most four times/second and unchanged light properties are not rewritten.
+- Native materials, modifiers, World and existing user lights remain in place.
+  Helpers are removed on disable/Stop/disconnect and before saving `.blend`; the
+  next runtime tick recreates them. Deleting the helper collection recovers safely.
+- Eevee requires its overlay/depth path to remain active to composite native
+  materials with Minecraft geometry. Editing aids are hidden individually during
+  play; HUD and status text use explicit pixel-space transforms.
+- Resetting a host session now re-acknowledges Minecraft's PID and advances the
+  export generation, even when Blender's process id stays the same. Stop/Start
+  therefore replays the complete atlas, geometry and environment assets.
+
+This is an adjustable physical-light approximation. The colored block lights
+come from SkyCraft's block appearance palette, not a vanilla colored-light system.
+Blender objects cast shadows on one another. Minecraft geometry does not yet
+cast those native shadows, so indoor sunlight and light through Minecraft walls
+remain limitations. Native Blender objects still do not receive Minecraft fog.
+Existing user lighting contributes to the result, including at night.
+
+`scripts/verify_lighting_in_blender.py` measures final window pixels on a native
+white sphere, with a fixed Blender camera. A local sample changed from about
+RGB `(112,112,112)` at noon to `(17,22,47)` at midnight. Placing glowstone raised
+the same pixels to `(167,158,144)`; a soul lantern produced `(81,118,134)`.
+Removing the emitter returned the model to moonlight. The samples verify visible
+change, not a photometric match with vanilla blocks.
+
+All eleven integration checks passed. The driver also checks native/MC depth ordering, all follow-camera
+choices in Material Preview, helper deletion recovery, scene save contents,
+viewport restoration and Stop/reconnect cleanup. Local screenshots and reports:
+`artifacts/lighting/`. Pure Python tests cover negative section coordinates,
+emitter bounds/selection limits, corrupt records and day/night/dimension palettes.
+The same-process reconnect restored the complete 2,573-section arena and texture
+atlas after initially exposing a missing-resend bug. All 23 Python tests and the
+Java build's 21 tests passed. Native light occlusion limitations above remain.
+
 ## Remaining work
 
 - Combat, physical portal traversal, enchantment and more vanilla systems need
   end-to-end tests; tested systems still need broader item/recipe/block coverage.
 - Clouds, exact vanilla star/End-sky presentation, some special entity effects
   and sound routing need more work. Audio currently comes from Minecraft.
-- Minecraft fog/lightmap shading currently affects Minecraft meshes; native
-  Blender objects keep their own scene lighting. Weather data follows the player;
+- Native light occlusion by Minecraft blocks, Minecraft fog on native models and
+  more accurate ambient lighting need further integration. Weather data follows the player;
   native Blender roofs and distant free-camera weather need further integration.
 - Broader hardware benchmarks, GPU texture upload cost during play, and long-session
   memory profiling require more work.
 - Fast animated Blender objects, riding moving platforms, Blender actor damage,
-  destruction, host water and light integration are incomplete.
-  Light/solid/dug protocol messages are currently retained only.
+  destruction and host water integration are incomplete.
+  Solid/dug protocol messages are currently retained only.
 - Developer launcher only: authenticated production launch, multiplayer validation,
   distributable add-on/runtime packaging and install/update UX are unfinished.
 - Texture-pack/mod compatibility and non-Windows platforms are unverified.

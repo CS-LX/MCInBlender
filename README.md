@@ -72,8 +72,18 @@ Blender 可编辑网格。模型场景保存在 `.blend`，游戏进度保存在
 原版 Esc 菜单可保存并退出到标题画面。
 
 侧栏 **Minecraft sky, lighting and weather** 控制 Minecraft 的天空、昼夜光照、
-雾和降水显示。光照使用 Minecraft 实际生成的光照贴图，包含夜视等效果；
-Blender 原生模型仍使用自己的材质和灯光。
+雾和降水显示。光照使用 Minecraft 实际生成的光照贴图，包含夜视等效果。
+
+可选的 **Light Blender models from Minecraft** 会切到材质预览，用临时 Blender
+灯光让原生模型跟随游戏昼夜变化，并受到附近发光方块照射。原有材质、修改器、
+World 和用户灯光会保留；可调整天空光、方块光强度和灯光数量上限。关闭开关或
+停止宿主会清理临时灯光并恢复视图设置，保存 `.blend` 时也会排除这些运行时灯光。
+默认最多选择 32 个能照到模型的方块光源，按靠近视角的最多 64 个可见模型筛选。
+这是基于游戏光照数据的近似物理灯光，彩色光源沿用 SkyCraft 的配色，并非原版的
+逐像素光照算法。原生对象之间可投影；Minecraft 方块对原生对象的投影、原生模型的
+Minecraft 雾效仍未实现。现有用户灯光也会影响最终亮度。
+
+![Minecraft glowstone illuminates editable native Blender models](docs/images/minecraft-light-on-blender-models.png)
 
 ![Minecraft night lighting alongside an editable Blender model](docs/images/night-in-blender.png)
 
@@ -128,6 +138,9 @@ python scripts/verify_streaming.py
 
 # Day/night, night vision, rain/snow and dimension rendering
 python scripts/verify_environment.py
+
+# Native model daylight/block lighting, cross-world depth and temporary helper cleanup
+python scripts/launch.py --only blender --world normal --blend "C:/Projects/My Scene.blend" --verification lighting
 
 # Save-and-quit regression in a fresh session, with an existing native model scene
 python scripts/launch.py --world normal --blend "C:/Projects/My Scene.blend" --verification lifecycle

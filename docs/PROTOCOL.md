@@ -14,6 +14,10 @@ The host publishes its initial state before its first heartbeat. In normal mode,
 teleport sequence zero adopts the existing Minecraft player position; explicit
 host teleports use a positive sequence. Reconnecting or restarting the host must
 never move a survival player to a default Blender origin.
+Resetting the host clears the Minecraft PID acknowledgement in the header.
+Once initialized state and a live heartbeat are present, Minecraft acknowledges
+its PID again and advances the connection generation. This also forces a complete
+atlas/geometry/environment resend for Stop/Start within the same Blender process.
 
 Coordinates are meters/blocks: Minecraft `(x,y,z)` maps to Blender `(x,-z,y)`.
 Triangles retain their winding because this is a rotation, not a reflection.
@@ -29,6 +33,16 @@ shared frame but defers its GPU upload until the overlay is visible again.
 For Blender hosts, unloaded client sections are evicted using existing zero-count
 section/light/solid/dug messages. Full-ring sends retry before forgetting a key.
 Revisiting a chunk generates fresh meshes through Minecraft's normal load updates.
+
+Render kind 8 is also consumed by optional native Blender lighting. The payload
+starts with `int32 sectionX, sectionY, sectionZ, uint32 count`, followed by `count`
+eight-byte emitters: local `uint8 x,y,z,emission` and packed `uint32 color`.
+Coordinates and emission are 0–15. The low three color bytes are RGB; the top
+byte contains light-kind/hazard metadata. These colors are SkyCraft's visual
+approximation, not vanilla colored light. A zero count removes the section's
+emitters. Selection is bounded by native model bounds, influence radius and a
+user-adjustable light cap. Native Blender point/sun lights use this data and the
+actual lightmap/celestial state; no native mesh or material conversion is needed.
 
 ## Optional Blender extensions
 

@@ -1,6 +1,6 @@
 import math
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 from . import keys
 
 
@@ -36,6 +36,11 @@ class Settings(bpy.types.PropertyGroup):
     show_minecraft: BoolProperty(name='Show live Minecraft world',default=True)
     frustum_culling: BoolProperty(name='Cull offscreen Minecraft sections',default=True)
     environment: BoolProperty(name='Minecraft sky, lighting and weather',default=True)
+    native_lighting: BoolProperty(name='Light Blender models from Minecraft',default=False,
+        description='Use Material Preview and temporary scene lights for Minecraft daylight and nearby emitting blocks')
+    native_sky_strength: FloatProperty(name='Daylight strength',default=1,min=0,max=10)
+    native_block_strength: FloatProperty(name='Block light strength',default=1,min=0,max=10)
+    native_light_limit: IntProperty(name='Block light limit',default=32,min=0,max=128)
     camera_view: EnumProperty(name='View',items=[('FIRST','First Person','Minecraft first person'),
         ('THIRD_BACK','Third Person — Behind','Follow the player from behind'),
         ('THIRD_FRONT','Third Person — Front','Face the player'),
@@ -272,6 +277,12 @@ class Panel(bpy.types.Panel):
             layout.prop(context.scene.mciblender,'live_collision')
             layout.prop(context.scene.mciblender,'show_minecraft')
             layout.prop(context.scene.mciblender,'environment')
+            layout.prop(context.scene.mciblender,'native_lighting')
+            if context.scene.mciblender.native_lighting:
+                box = layout.box()
+                box.prop(context.scene.mciblender,'native_sky_strength')
+                box.prop(context.scene.mciblender,'native_block_strength')
+                box.prop(context.scene.mciblender,'native_light_limit')
             layout.operator('mciblender.rebuild')
             layout.prop(context.scene.mciblender,'command',text='')
             layout.operator('mciblender.command')

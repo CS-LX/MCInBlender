@@ -81,6 +81,7 @@ class ViewportRenderer:
         self.counts = Counter()
         self.errors = []
         self.solids, self.dug, self.lights = {}, {}, {}
+        self.light_revision = 0
         self.selection = None
         self.entity_records = []
         self.entity_batches = []
@@ -99,6 +100,7 @@ class ViewportRenderer:
             self.solids.clear()
             self.dug.clear()
             self.lights.clear()
+            self.light_revision += 1
             self.entity_records.clear()
             self.entity_batches.clear()
             self.selection = None
@@ -119,6 +121,8 @@ class ViewportRenderer:
             key = struct.unpack_from('<iii',payload)
             n, = struct.unpack_from('<I',payload,12)
             store = {8:self.lights, 10:self.solids, 11:self.dug}[kind]
+            if kind == 8 and store.get(key) != (payload if n else None):
+                self.light_revision += 1
             if n:
                 store[key] = payload
             else:

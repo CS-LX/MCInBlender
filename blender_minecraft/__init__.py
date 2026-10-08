@@ -6,6 +6,13 @@ bl_info = {'name':'Minecraft in Blender','author':'CS-LX; SkyCraft by chasmlol',
 SESSION = None
 
 
+def before_save(_):
+    # Runtime helpers must not become permanent content of a user's .blend file.
+    # The next session tick recreates them after the synchronous save completes.
+    if SESSION and not SESSION.closed:
+        SESSION.native_lighting.close()
+
+
 def scene_changed(scene, depsgraph):
     session = SESSION
     if not session or session.closed or scene != session.scene:
@@ -27,6 +34,7 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.mciblender = bpy.props.PointerProperty(type=Settings)
     bpy.app.handlers.depsgraph_update_post.append(scene_changed)
+    bpy.app.handlers.save_pre.append(before_save)
 
 
 def unregister():
@@ -40,6 +48,8 @@ def unregister():
         bpy.app.timers.unregister(tick)
     if scene_changed in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(scene_changed)
+    if before_save in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.remove(before_save)
     del bpy.types.Scene.mciblender
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

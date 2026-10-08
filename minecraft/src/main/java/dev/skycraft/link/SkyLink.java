@@ -110,12 +110,18 @@ public final class SkyLink {
 		if (shm != null) {
 			LONG.setRelease(shm, OFF_HEADER + H_MC_HEARTBEAT, tickCount());
 			int pid = shm.get(JAVA_INT, OFF_HEADER + H_SKYRIM_PID);
-			if (pid != skyrimPid) {
-				// Skyrim restarted and reset the shared state; start our side over too.
+			boolean blender = Boolean.getBoolean("mciblender.host");
+			// Blender can stop/start a host session without changing its process id.
+			// Its reset clears our PID acknowledgement. Wait for initialized host
+			// state/heartbeat, then acknowledge and invalidate every exported cache.
+			if (blender && !active()) return;
+			boolean sessionReset = blender && shm.get(JAVA_INT, OFF_HEADER + H_MC_PID) == 0;
+			if (pid != skyrimPid || sessionReset) {
 				skyrimPid = pid;
+				shm.set(JAVA_INT, OFF_HEADER + H_MC_PID, (int) ProcessHandle.current().pid());
 				overlayBack = 1;
 				generation++;
-				SkyCraft.LOG.info("SkyCraft: Skyrim instance changed (pid {})", pid);
+				SkyCraft.LOG.info("SkyCraft: host session changed (pid {})", pid);
 			}
 			return;
 		}

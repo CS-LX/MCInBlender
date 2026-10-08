@@ -9,11 +9,13 @@ import traceback
 from collections import deque
 import bpy
 import blf
-from mathutils import Vector
+import gpu
+from mathutils import Matrix, Vector
 from . import protocol as P
 from .transport import HostLink
 from .renderer import ViewportRenderer
 from .collision import SceneCollision
+from .native_lighting import NativeLighting
 
 
 class Session:
@@ -27,6 +29,7 @@ class Session:
                          self.space.region_3d.view_distance,self.space.region_3d.view_perspective,
                          self.space.lens,self.space.overlay.show_overlays)
         self.renderer = ViewportRenderer()
+        self.native_lighting = NativeLighting(self.scene,self.space)
         self.collision = SceneCollision()
         self.collision.rebuild(context)
         self.link = HostLink()
@@ -125,6 +128,7 @@ class Session:
             count,selected = struct.unpack_from('<II',raw,4)
             self.renderer.selection = struct.unpack_from('<6f',raw,12) if selected else None
             self.renderer.entity_records = [raw[0x40+i*96:0x40+(i+1)*96] for i in range(min(160,count))]
+        self.native_lighting.update(self)
         self.area.tag_redraw()
         if time.monotonic()-self.last_snapshot>2:
             self.last_snapshot = time.monotonic()
@@ -266,6 +270,24 @@ class Session:
     def draw_overlay(self):
         if not self.correct_context() or self.closed:
             return
+        # With editing aids hidden, Eevee may leave 3D matrices active for pixel
+        # callbacks. Give HUD and status text an explicit region-pixel transform.
+        w,h = max(1,self.region.width),max(1,self.region.height)
+        depth,mask = gpu.state.depth_test_get(),gpu.state.depth_mask_get()
+        try:
+            with gpu.matrix.push_pop(),gpu.matrix.push_pop_projection():
+                gpu.matrix.load_matrix(Matrix.Identity(4))
+                gpu.matrix.load_projection_matrix(Matrix(((2/w,0,0,-1),(0,2/h,0,-1),(0,0,-1,0),(0,0,0,1))))
+                gpu.state.depth_test_set('NONE')
+                gpu.state.depth_mask_set(False)
+                self.draw_overlay_contents()
+        finally:
+            gpu.state.depth_test_set(depth)
+            gpu.state.depth_mask_set(mask)
+
+    def draw_overlay_contents(self):
+        if not self.correct_context() or self.closed:
+            return
         try:
             if self.follow_camera or self.captured:
                 self.renderer.draw_overlay(bpy.context)
@@ -310,6 +332,7 @@ class Session:
         data['collision_rebuilds'] = self.collision_rebuilds
         data['performance'] = self.renderer.profile()
         data['lightmap_samples'] = self.renderer.lightmap_samples
+        data['native_lighting'] = self.native_lighting.summary
         data['environment_textures'] = list(self.renderer.environment_textures)
         keys = self.renderer.sections.keys()
         data['section_extent'] = [[min(k[i] for k in keys),max(k[i] for k in keys)] for i in range(3)] if keys else None
@@ -323,6 +346,7 @@ class Session:
         if self.closed:
             return
         self.closed = True
+        self.native_lighting.close()
         for handle in self.draw_handles:
             bpy.types.SpaceView3D.draw_handler_remove(handle,'WINDOW')
         self.link.close()

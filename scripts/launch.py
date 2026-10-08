@@ -43,7 +43,7 @@ def main():
     ap.add_argument('--only',choices=['blender','minecraft','build'])
     ap.add_argument('--test-input',action='store_true',help='Enable Blender event simulation for integration tests')
     ap.add_argument('--keep-minecraft',action='store_true',help='Developer mode: keep Minecraft alive when Blender closes, for host reconnect tests')
-    ap.add_argument('--verification',choices=['fusion','performance','lifecycle'],help='Run Blender integration checks in an isolated instance')
+    ap.add_argument('--verification',choices=['fusion','performance','lifecycle','lighting'],help='Run Blender integration checks in an isolated instance')
     ap.add_argument('--world',choices=['scene','normal'],default='scene')
     ap.add_argument('--blend',type=Path,help='Use models from this .blend file as the host scene')
     args = ap.parse_args()
