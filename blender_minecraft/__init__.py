@@ -30,7 +30,8 @@ def scene_changed(scene, depsgraph):
 def register():
     import bpy
     from .operators import CLASSES, Settings
-    for cls in CLASSES:
+    from .distribution import CLASSES as DISTRIBUTION_CLASSES
+    for cls in (*DISTRIBUTION_CLASSES, *CLASSES):
         bpy.utils.register_class(cls)
     bpy.types.Scene.mciblender = bpy.props.PointerProperty(type=Settings)
     bpy.app.handlers.depsgraph_update_post.append(scene_changed)
@@ -40,6 +41,7 @@ def register():
 def unregister():
     import bpy
     from .operators import CLASSES, tick
+    from .distribution import CLASSES as DISTRIBUTION_CLASSES
     global SESSION
     if SESSION:
         SESSION.close()
@@ -51,5 +53,5 @@ def unregister():
     if before_save in bpy.app.handlers.save_pre:
         bpy.app.handlers.save_pre.remove(before_save)
     del bpy.types.Scene.mciblender
-    for cls in reversed(CLASSES):
+    for cls in reversed((*DISTRIBUTION_CLASSES, *CLASSES)):
         bpy.utils.unregister_class(cls)

@@ -15,8 +15,9 @@ import org.slf4j.LoggerFactory;
 
 public final class SkyCraft implements ModInitializer {
 	public static final String MOD_ID = "skycraft";
-	public static final boolean VANILLA = Boolean.getBoolean("mciblender.vanilla");
-	public static final String WORLD_NAME = System.getProperty("mciblender.worldName", "MCInBlender");
+	public static final boolean BLENDER = Boolean.parseBoolean(System.getProperty("mciblender.host", "true"));
+	public static final boolean VANILLA = Boolean.parseBoolean(System.getProperty("mciblender.vanilla", "true"));
+	public static final String WORLD_NAME = System.getProperty("mciblender.worldName", VANILLA ? "MCInBlender Survival" : "MCInBlender");
 	public static final Logger LOG = LoggerFactory.getLogger(MOD_ID);
 	private static final String KIT2_TAG = "skycraft_builder_kit";
 

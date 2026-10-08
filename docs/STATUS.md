@@ -278,9 +278,32 @@ All 28 Python tests pass; the Fabric build and its 21 Java tests pass.
 - Fast animated Blender objects, riding moving platforms, Blender actor damage,
   destruction and host water integration are incomplete.
   Solid/dug protocol messages are currently retained only.
-- Developer launcher only: authenticated production launch, multiplayer validation,
-  distributable add-on/runtime packaging and install/update UX are unfinished.
+- Public distribution: see the packaging stage below. Account login and Java/game
+  downloads are delegated to the user's launcher; multiplayer validation remains.
 - Texture-pack/mod compatibility and non-Windows platforms are unverified.
 
 This is a delivered developer prototype, not a production launcher or a guarantee
 of compatibility with every Minecraft feature, mod or hardware configuration.
+
+## Distribution — installable Blender add-on and precompiled Minecraft pack
+
+- Release ZIPs include the Blender add-on, x64 atomic DLL, the compiled Fabric
+  bridge and Fabric API. A bundled MRPACK imports into compatible launchers;
+  a combined bundle also contains individual mods and installation/use guides.
+- Installed data/logs use Blender's user configuration directory. The diagnostic
+  file input queue is disabled by default in published add-ons.
+- The Minecraft mod defaults to the Blender mapping, normal vanilla world and
+  Blender extensions without special JVM arguments. Its own window stays visible
+  until the Blender host connects. Login remains with the user's launcher.
+- Versioned packages distinguish CI and release channels. `main` uses squash-only
+  PR merging; only main pushes and four-component version tags trigger packaging.
+  Tags must match VERSION and refer to commits in main history.
+
+Local package checks loaded the exact bundled DLL and installed/enabled the ZIP
+using Steam Blender 5.0.1 in an isolated user profile. The installed add-on then
+connected to the packaged production JARs using Loom's production run task (not
+the development source classpath). The world and HUD appeared, an actual Blender
+E key opened InventoryScreen, and normal quit saved the world and stopped Java.
+The local smoke report and capture are under `artifacts/installed-package/`.
+This checks package operation with a development test identity; it does not claim
+to verify a user's Microsoft account login. 32 Python checks and 21 Java tests pass.

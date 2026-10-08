@@ -13,3 +13,10 @@ Mojang/Microsoft; Blender belongs to its respective contributors. This is an
 independent project, not an official Minecraft or Blender product. Dependencies
 are downloaded from their publishers, not bundled with source.
 
+## Release dependencies
+
+Release packs include Fabric API 0.161.0+26.3, licensed under Apache-2.0.
+Its JAR and nested modules retain their original license files.
+Source: https://github.com/FabricMC/fabric
+License: https://github.com/FabricMC/fabric/blob/26.3/LICENSE
+

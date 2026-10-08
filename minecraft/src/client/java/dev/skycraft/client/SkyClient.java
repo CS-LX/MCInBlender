@@ -409,7 +409,7 @@ public final class SkyClient {
 		mc.guiScale = minecraft.getWindow().getGuiScale();
 		mc.frameCounter = ++frameCounter;
 		SkyLink.writeMcState(mc);
-		if (Boolean.getBoolean("mciblender.host")) BlenderEnvironment.send(minecraft);
+		if (dev.skycraft.SkyCraft.BLENDER) BlenderEnvironment.send(minecraft);
 
 		if ((flags & Proto.MC_IN_WORLD) != 0) {
 			try {

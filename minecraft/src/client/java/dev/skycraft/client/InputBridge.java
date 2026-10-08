@@ -70,7 +70,7 @@ public final class InputBridge {
 				}
 			}
 			case 9 -> {
-				if (Boolean.getBoolean("mciblender.host")) {
+				if (dev.skycraft.SkyCraft.BLENDER) {
 					releaseAll();
 					minecraft.stop(); // Normal shutdown saves the integrated world before exiting.
 				}

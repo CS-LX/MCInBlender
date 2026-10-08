@@ -110,7 +110,7 @@ public final class WorldExporter {
 			resendEverything(minecraft, level);
 		}
 		meshDirtySections(level);
-		if (Boolean.getBoolean("mciblender.host") && System.nanoTime() >= nextPrune) {
+		if (dev.skycraft.SkyCraft.BLENDER && System.nanoTime() >= nextPrune) {
 			nextPrune = System.nanoTime() + 1_000_000_000L;
 			pruneUnloaded(level);
 		}
@@ -124,7 +124,7 @@ public final class WorldExporter {
 	}
 
 	private static void resendEverything(Minecraft minecraft, ClientLevel level) {
-		if (Boolean.getBoolean("mciblender.host")) dev.skycraft.client.BlenderEnvironment.invalidateAssets();
+		if (dev.skycraft.SkyCraft.BLENDER) dev.skycraft.client.BlenderEnvironment.invalidateAssets();
 		sentGeneration = SkyLink.generation();
 		sentLevel = level;
 		atlas = SkyAtlas.build(minecraft);

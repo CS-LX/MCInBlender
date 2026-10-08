@@ -55,6 +55,22 @@ dependencies {
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
+configurations { releaseMods }
+dependencies { releaseMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}" }
+tasks.register('copyReleaseMods', Copy) {
+	from configurations.releaseMods
+	into layout.buildDirectory.dir('release-mods')
+	include 'fabric-api-*.jar'
+}
+
+// Maintainer smoke run of the ZIP's compiled JARs, without runClient/dev classes.
+tasks.register('verifyPackageClient', net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+	mods.from fileTree('../.local/package-game/mods') { include '*.jar' }
+	runDir = file('../.local/package-game')
+	programArgs.addAll('--username', 'PackageTest')
+	jvmArgs.add('--enable-native-access=ALL-UNNAMED')
+}
+
 test {
 	useJUnitPlatform()
 	testLogging { events "passed", "failed"; exceptionFormat "full" }
