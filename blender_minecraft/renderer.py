@@ -17,20 +17,34 @@ def make_shader():
     interface = gpu.types.GPUStageInterfaceInfo('mciblender_varyings')
     interface.smooth('VEC2','texCoord')
     interface.smooth('VEC4','tint')
+    interface.smooth('VEC2','fogDistance')
     info = gpu.types.GPUShaderCreateInfo()
     info.push_constant('MAT4','transform')
+    info.push_constant('VEC3','worldOrigin')
+    info.push_constant('VEC3','cameraPosition')
+    info.push_constant('VEC3','fogColor')
+    info.push_constant('VEC4','fogRanges')
     info.vertex_in(0,'VEC3','position')
     info.vertex_in(1,'VEC2','uv')
     info.vertex_in(2,'VEC4','color')
+    info.vertex_in(3,'VEC2','lightLevels')
     info.vertex_out(interface)
     info.sampler(0,'FLOAT_2D','atlas')
+    info.sampler(1,'FLOAT_2D','lightmap')
     info.fragment_out(0,'VEC4','fragColor')
-    info.vertex_source('void main(){gl_Position=transform*vec4(position,1.0); texCoord=uv; tint=color;}')
+    info.vertex_source('''void main(){
+        gl_Position=transform*vec4(position,1.0); texCoord=uv;
+        tint=color*vec4(texelFetch(lightmap,clamp(ivec2(lightLevels),ivec2(0),ivec2(15)),0).rgb,1.0);
+        vec3 delta=position+worldOrigin-cameraPosition;
+        fogDistance=vec2(length(delta),length(delta.xy));
+    }''')
     info.fragment_source('''void main(){
         ivec2 size=textureSize(atlas,0);
         ivec2 p=clamp(ivec2(floor(texCoord*vec2(size))),ivec2(0),size-1);
         vec4 c=texelFetch(atlas,p,0)*tint;
         if(c.a<0.08) discard;
+        float fog=max(smoothstep(fogRanges.x,fogRanges.y,fogDistance.x),smoothstep(fogRanges.z,fogRanges.w,fogDistance.y));
+        c.rgb=mix(c.rgb,fogColor,fog);
         fragColor=c;
     }''')
     return gpu.shader.create_from_info(info)
@@ -45,6 +59,12 @@ class ViewportRenderer:
     def __init__(self):
         self.shader = None
         self.textures = {}
+        self.lightmap = None
+        self.lightmap_pending = None
+        self.lightmap_samples = None
+        self.fullbright = None
+        self.environment_textures = {}
+        self.atmosphere = None
         self.texture_pixels = {}
         self.sections = {}
         self.section_bounds = {}
@@ -105,6 +125,12 @@ class ViewportRenderer:
                 store.pop(key,None)
         elif kind == 12:
             self.environment = json.loads(payload.decode('utf8'))
+        elif kind == 13:
+            if len(payload)!=16*16*4:
+                raise P.ProtocolError('Invalid lightmap size')
+            self.lightmap_pending = payload
+        elif kind == 14:
+            self.pending[('environment',struct.unpack_from('<I',payload)[0])] = (kind,payload)
         else:
             self.errors.append(f'Unknown render kind {kind}')
 
@@ -115,10 +141,11 @@ class ViewportRenderer:
         if len(pos):
             pos[:,1],pos[:,2] = -vertices['position'][:,2],vertices['position'][:,1]
         color = vertices['color'].astype(np.float32)/255
-        # SkyCraft carries vanilla block/sky light; retain visibility in unlit Blender scenes.
+        shades = self.environment.get('atmosphere',{}).get('faceShade',(0.5,1.0,0.8,0.8,0.6,0.6))
+        normals = np.minimum((vertices['flags']>>4)&7,6)
+        color[:,:3] *= np.asarray((1.0,*shades),dtype=np.float32)[normals,None]
         light = vertices['light']
-        brightness = np.maximum(light & 255,(light >> 8) & 255).astype(np.float32)/15
-        color[:,:3] *= np.maximum(0.18,np.minimum(1,brightness))[:,None]
+        light_levels = np.stack((light&255,(light>>8)&255),axis=1).astype(np.float32)
         result = []
         for tex,first,count,flags in batches:
             if not count:
@@ -130,7 +157,8 @@ class ViewportRenderer:
                 if not len(indices):
                     continue
                 batch = batch_for_shader(self.shader,'TRIS',{
-                    'position':pos[indices], 'uv':vertices['uv'][indices], 'color':color[indices]})
+                    'position':pos[indices], 'uv':vertices['uv'][indices], 'color':color[indices],
+                    'lightLevels':light_levels[indices]})
                 result.append((tex,translucent,batch))
         offset = np.asarray(P.mc_to_blender(origin),dtype=np.float32)
         if len(pos):
@@ -144,14 +172,23 @@ class ViewportRenderer:
         flush_start = time.perf_counter()
         if self.shader is None:
             self.shader = make_shader()
+            self.fullbright = texture(16,16,bytes([255])*(16*16*4))
         deadline = time.perf_counter()+budget_ms/1000
         # A new atlas must precede its patches, even under a large mesh backlog.
         for key in list(self.pending):
-            if key[0] in ('atlas','texture'):
+            if key[0] in ('atlas','texture','environment'):
                 kind,payload = self.pending.pop(key)
-                ident,w,h,pixels = P.texture_payload(kind,payload)
+                ident,w,h,pixels = P.texture_payload(4 if kind==14 else kind,payload)
+                if kind==14:
+                    self.environment_textures[ident] = texture(w,h,pixels)
+                    continue
                 self.texture_pixels[ident] = (w,h,bytearray(pixels))
                 self.textures[ident] = texture(w,h,pixels)
+        if self.lightmap_pending is not None:
+            self.lightmap = texture(16,16,self.lightmap_pending)
+            pixels = np.frombuffer(self.lightmap_pending,dtype=np.uint8).reshape(16,16,4)
+            self.lightmap_samples = {'dark':pixels[0,0].tolist(),'sky':pixels[15,0].tolist(),'block':pixels[0,15].tolist()}
+            self.lightmap_pending = None
         atlas_start = time.perf_counter()
         if self.atlas_patches and 0 in self.texture_pixels:
             w,h,pixels = self.texture_pixels[0]
@@ -196,7 +233,8 @@ class ViewportRenderer:
         self.entity_batches = []
         for a,b,translucent in [(0,solid,False),(solid,len(pos),True)]:
             if b>a:
-                batch = batch_for_shader(self.shader,'TRIS',{'position':pos[a:b],'uv':uv[a:b],'color':color[a:b]})
+                batch = batch_for_shader(self.shader,'TRIS',{'position':pos[a:b],'uv':uv[a:b],'color':color[a:b],
+                                                           'lightLevels':[(0,15)]*(b-a)})
                 self.entity_batches.append((0,translucent,batch))
         self.performance['flush_ms'] = (time.perf_counter()-flush_start)*1000
 
@@ -230,7 +268,7 @@ class ViewportRenderer:
             gpu.state.depth_test_set(depth)
             gpu.state.depth_mask_set(mask)
 
-    def draw_world(self, context, player, show_selection=True, culling=True, upload_overlay=True):
+    def draw_world(self, context, player, show_selection=True, culling=True, upload_overlay=True, environment=True):
         frame_start = time.perf_counter()
         draw_calls = 0
         visible_sections = 0
@@ -239,8 +277,20 @@ class ViewportRenderer:
             return
         blend,depth,mask = gpu.state.blend_get(),gpu.state.depth_test_get(),gpu.state.depth_mask_get()
         try:
+            atmosphere = self.environment.get('atmosphere',{}) if environment else {}
+            eye = context.region_data.view_matrix.inverted().translation
+            if atmosphere:
+                if self.atmosphere is None:
+                    from .atmosphere import AtmosphereRenderer
+                    self.atmosphere = AtmosphereRenderer()
+                self.atmosphere.draw_sky(context,atmosphere,self.environment_textures)
             gpu.state.depth_test_set('LESS_EQUAL')
             self.shader.bind()
+            self.shader.uniform_sampler('lightmap',(self.lightmap if environment else None) or self.fullbright)
+            self.shader.uniform_float('cameraPosition',eye)
+            self.shader.uniform_float('fogColor',atmosphere.get('fogColor',(0,0,0)))
+            self.shader.uniform_float('fogRanges',tuple(atmosphere.get(k,d) for k,d in
+                [('fogStart',1e8),('fogEnd',1e9),('distanceStart',1e8),('distanceEnd',1e9)]))
             transform = context.region_data.perspective_matrix
             if self.bounds_dirty:
                 self.section_keys = tuple(self.section_bounds)
@@ -269,12 +319,15 @@ class ViewportRenderer:
                     groups.sort(key=lambda g:(Vector(g[0])-eye).length_squared,reverse=True)
                 for origin,batches in groups:
                     self.shader.uniform_float('transform',transform @ Matrix.Translation(origin))
+                    self.shader.uniform_float('worldOrigin',origin)
                     for tex,is_transparent,batch in batches:
                         if is_transparent != translucent or tex not in self.textures:
                             continue
                         self.shader.uniform_sampler('atlas',self.textures[tex])
                         batch.draw(self.shader)
                         draw_calls += 1
+            if atmosphere:
+                self.atmosphere.draw_weather(context,atmosphere,self.environment_textures,self.lightmap or self.fullbright)
             if show_selection:
                 self.draw_selection(context)
         finally:

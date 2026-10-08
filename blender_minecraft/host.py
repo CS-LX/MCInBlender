@@ -47,6 +47,7 @@ class Session:
         self.collider_signature = self.scene_signature()
         self.last_scene_poll = 0
         self.closed = False
+        self.quitting = False
         self.started = time.monotonic()
         self.events = []
         self.errors = []
@@ -77,6 +78,13 @@ class Session:
         if self.closed:
             return
         self.tick_count += 1
+        if self.quitting and not self.link.alive:
+            self.write_diagnostics()
+            self.close()
+            from . import __name__ as package_name
+            import sys
+            sys.modules[package_name].SESSION = None
+            return
         from .diagnostics import controls
         controls(self)
         if self.closed:
@@ -226,11 +234,16 @@ class Session:
             if not self.player.screen_open:
                 self.command_stage = 0
                 return
+            if self.renderer.environment.get('screen')!='ChatScreen':
+                return
             for char in self.commands[0]:
                 self.link.input(5,a=ord(char))
             self.command_stage = 2
             self.command_time = now+0.15
         elif self.command_stage == 2:
+            if self.renderer.environment.get('screen')!='ChatScreen':
+                self.command_stage = 0
+                return
             key(40)
             self.commands.popleft()
             self.command_stage = 0
@@ -243,7 +256,8 @@ class Session:
             if self.scene.mciblender.show_minecraft:
                 self.renderer.draw_world(bpy.context,self.player,show_selection=self.follow_camera,
                                          culling=self.scene.mciblender.frustum_culling,
-                                         upload_overlay=self.follow_camera or self.captured)
+                                         upload_overlay=self.follow_camera or self.captured,
+                                         environment=self.scene.mciblender.environment)
             else:
                 self.renderer.flush(upload_overlay=self.follow_camera or self.captured)
         except Exception as exc:
@@ -261,6 +275,8 @@ class Session:
             status = 'PLAYING | Shift+Esc edits Blender scene' if self.captured else ('BLENDER EDIT | Minecraft continues simulating' if not self.follow_camera else 'Click Play or Edit Scene')
             if not self.link.alive:
                 status = 'Waiting for Minecraft bridge...'
+            if self.quitting:
+                status = 'Saving Minecraft world and quitting...'
             blf.draw(0,'MCInBlender | '+status)
             if self.errors:
                 blf.position(0,16,self.region.height-48,0)
@@ -293,6 +309,8 @@ class Session:
         data['camera_view'] = self.scene.mciblender.camera_view
         data['collision_rebuilds'] = self.collision_rebuilds
         data['performance'] = self.renderer.profile()
+        data['lightmap_samples'] = self.renderer.lightmap_samples
+        data['environment_textures'] = list(self.renderer.environment_textures)
         keys = self.renderer.sections.keys()
         data['section_extent'] = [[min(k[i] for k in keys),max(k[i] for k in keys)] for i in range(3)] if keys else None
         data['section_records'] = {'lights':len(self.renderer.lights),'solids':len(self.renderer.solids),'dug':len(self.renderer.dug)}

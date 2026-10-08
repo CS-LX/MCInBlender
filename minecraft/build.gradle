@@ -24,7 +24,7 @@ loom {
 	runs {
 		client {
 			programArgs "--username", (System.getenv("SKYCRAFT_USERNAME") ?: "BlenderPlayer")
-			vmArgs "--enable-native-access=ALL-UNNAMED", "-Dskycraft.quitWithSkyrim=false",
+			vmArgs "--enable-native-access=ALL-UNNAMED", "-Dskycraft.quitWithSkyrim=" + (System.getenv("MCIBLENDER_KEEP_MINECRAFT") != "1"),
 				"-Dskycraft.link=Local\\MCInBlender_SkyCraft_v11", "-Dskycraft.startHidden=true", "-Dmciblender.host=true",
 				"-Dmciblender.vanilla=" + (System.getenv("MCIBLENDER_WORLD") == "normal"),
 				"-Dmciblender.worldName=" + (System.getenv("MCIBLENDER_WORLD") == "normal" ? "MCInBlender Survival" : "MCInBlender")

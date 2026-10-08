@@ -23,7 +23,7 @@ def controls(session):
         elif action == 'look':
             session.yaw,session.pitch = data['yaw'],data['pitch']
         elif action == 'settings':
-            allowed = {'frustum_culling','camera_view','show_minecraft'}
+            allowed = {'frustum_culling','camera_view','show_minecraft','environment'}
             for name,value in data['values'].items():
                 if name not in allowed:
                     raise ValueError(f'Unsupported diagnostic setting: {name}')
@@ -32,6 +32,10 @@ def controls(session):
             import bpy
             with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):
                 bpy.ops.mciblender.capture('INVOKE_DEFAULT')
+        elif action == 'quit_game':
+            import bpy
+            with bpy.context.temp_override(window=session.window,area=session.area,region=session.region):
+                bpy.ops.mciblender.quit_game()
         elif action == 'blender_event':
             session.window.event_simulate(**data['event'])
         elif action == 'capture':

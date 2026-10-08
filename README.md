@@ -8,7 +8,8 @@ the user's scene. This is not a Minecraft host displaying Blender screenshots.
 
 **Status: playable developer prototype.** Native Blender ground collision,
 Minecraft block interaction, crafting, containers, smelting, redstone, water flow,
-survival terrain, four camera choices and live Blender model collision have been
+survival terrain, four camera choices, live Blender model collision, day/night
+lighting and precipitation have been
 tested in a real Blender + Minecraft session. See [verified features and gaps](docs/STATUS.md).
 
 ![Minecraft geometry, mobs and HUD inside a native Blender scene](docs/images/blender-native-world.png)
@@ -70,6 +71,16 @@ Blender 可编辑网格。模型场景保存在 `.blend`，游戏进度保存在
 都保存在被 Git 忽略的 `minecraft/run/saves/` 下。初始开发存档允许命令，便于测试。
 原版 Esc 菜单可保存并退出到标题画面。
 
+侧栏 **Minecraft sky, lighting and weather** 控制 Minecraft 的天空、昼夜光照、
+雾和降水显示。光照使用 Minecraft 实际生成的光照贴图，包含夜视等效果；
+Blender 原生模型仍使用自己的材质和灯光。
+
+![Minecraft night lighting alongside an editable Blender model](docs/images/night-in-blender.png)
+
+**Save & Quit Minecraft** 保存并退出游戏进程，同时保留 Blender 场景窗口。
+正常关闭 Blender 后，游戏也会在数秒内自动保存退出；模型文件仍按 Blender 的
+常规方式保存。开发时可加 `--keep-minecraft` 保留游戏进程，方便重启宿主和测试重连。
+
 当前启动器使用 Fabric 的 `runClient` 开发实例。它不读取个人启动器的账户或存档，
 也不是已完成的正版启动器/多人联机发行包。正式认证启动、安装包和更多玩法验证仍在进行。
 
@@ -100,7 +111,7 @@ python -m unittest discover -s tests -v
 python scripts/verify_runtime.py
 
 # Real Blender modal-input and dimension tests in a normal-mode session
-python scripts/launch.py --world normal --test-input
+python scripts/launch.py --world normal --test-input --keep-minecraft
 python scripts/verify_survival.py
 
 # Crafting, containers, smelting, redstone and water through real Blender input
@@ -114,6 +125,12 @@ python scripts/launch.py --only blender --world normal --blend "C:/Projects/My S
 
 # Travel beyond render distance and back, then exercise the real inventory UI
 python scripts/verify_streaming.py
+
+# Day/night, night vision, rain/snow and dimension rendering
+python scripts/verify_environment.py
+
+# Save-and-quit regression in a fresh session, with an existing native model scene
+python scripts/launch.py --world normal --blend "C:/Projects/My Scene.blend" --verification lifecycle
 ```
 
 Run one developer session at a time. The live tests change the isolated development

@@ -38,7 +38,17 @@ SkyCraft Skyrim host is unaffected. Existing v11 record layouts are unchanged.
 | Direction | Record | Payload |
 | --- | --- | --- |
 | MC → Blender render ring | 12 | UTF-8 JSON, schema 1: dimension, vanilla mode, screen name, pause/time/weather, health/food/XP, held item, game mode, inventory counts, carried stack, container slots and GUI origin, targeted block |
+| MC → Blender render ring | 13 | 1,024 bytes: vanilla's current 16×16 RGBA8 lightmap, x=block light and y=sky light |
+| MC → Blender render ring | 14 | Four little-endian uint32 values: texture id, width, height, reserved zero; then RGBA8 pixels. Separate environment texture namespace: sun=0, moon=1, rain=2, snow=3, End sky=4 |
 | Blender → MC input ring | 9 | No payload; release input and request normal Minecraft shutdown, which saves the integrated world |
+
+Record 12's optional `atmosphere` object includes Minecraft's skybox type, sky/fog
+colors, celestial angles, star/rain intensity, face shading, spherical and
+horizontal fog ranges, and rain/snow columns. These are gameplay-camera values;
+precipitation columns retain Minecraft's terrain/biome clipping around the player.
+The host projects them using the actual Blender view. Lightmap readback is
+asynchronous and generation-checked. Environment PNGs come from the installed
+game/resource pack at runtime; none are stored in this repository.
 
 The development diagnostics inbox `.local/control/` accepts specific JSON actions
 only. It is not a general Python executor. `blender_event` uses Blender's own

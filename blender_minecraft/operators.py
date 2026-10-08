@@ -35,6 +35,7 @@ class Settings(bpy.types.PropertyGroup):
     live_collision: BoolProperty(name='Live Blender collision',default=True)
     show_minecraft: BoolProperty(name='Show live Minecraft world',default=True)
     frustum_culling: BoolProperty(name='Cull offscreen Minecraft sections',default=True)
+    environment: BoolProperty(name='Minecraft sky, lighting and weather',default=True)
     camera_view: EnumProperty(name='View',items=[('FIRST','First Person','Minecraft first person'),
         ('THIRD_BACK','Third Person — Behind','Follow the player from behind'),
         ('THIRD_FRONT','Third Person — Front','Face the player'),
@@ -73,6 +74,24 @@ class Stop(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class QuitGame(bpy.types.Operator):
+    bl_idname = 'mciblender.quit_game'
+    bl_label = 'Save & Quit Minecraft'
+    bl_description = 'Save the Minecraft world and exit its process; keep the Blender scene open'
+
+    def execute(self, context):
+        session = package().SESSION
+        if not session or not session.link.alive:
+            return {'CANCELLED'}
+        try:
+            session.link.input(9)
+            session.quitting = True
+        except BufferError as exc:
+            self.report({'ERROR'},str(exc))
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class Capture(bpy.types.Operator):
     bl_idname = 'mciblender.capture'
     bl_label = 'Capture Input / Play'
@@ -106,7 +125,7 @@ class Capture(bpy.types.Operator):
 
     def modal(self, context, event):
         s = self.session
-        if s.closed or event.type == 'WINDOW_DEACTIVATE' or (event.type == 'ESC' and event.shift and event.value == 'PRESS'):
+        if s.closed or s.quitting or not s.link.alive or event.type == 'WINDOW_DEACTIVATE' or (event.type == 'ESC' and event.shift and event.value == 'PRESS'):
             return self.finish(context)
         screen = bool(s.player and s.player.screen_open)
         if screen != self.last_screen:
@@ -252,12 +271,14 @@ class Panel(bpy.types.Panel):
             layout.operator('mciblender.edit_scene',icon='EDITMODE_HLT')
             layout.prop(context.scene.mciblender,'live_collision')
             layout.prop(context.scene.mciblender,'show_minecraft')
+            layout.prop(context.scene.mciblender,'environment')
             layout.operator('mciblender.rebuild')
             layout.prop(context.scene.mciblender,'command',text='')
             layout.operator('mciblender.command')
             layout.operator('mciblender.stop',icon='PAUSE')
+            layout.operator('mciblender.quit_game',icon='QUIT')
             if session.errors:
                 layout.label(text='See logs/host-status.json',icon='ERROR')
 
 
-CLASSES = (Settings,Start,Stop,Capture,Command,Rebuild,EditScene,Demo,Panel)
+CLASSES = (Settings,Start,Stop,QuitGame,Capture,Command,Rebuild,EditScene,Demo,Panel)

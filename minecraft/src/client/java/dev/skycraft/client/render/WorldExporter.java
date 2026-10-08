@@ -124,6 +124,7 @@ public final class WorldExporter {
 	}
 
 	private static void resendEverything(Minecraft minecraft, ClientLevel level) {
+		if (Boolean.getBoolean("mciblender.host")) dev.skycraft.client.BlenderEnvironment.invalidateAssets();
 		sentGeneration = SkyLink.generation();
 		sentLevel = level;
 		atlas = SkyAtlas.build(minecraft);

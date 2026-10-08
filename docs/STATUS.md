@@ -146,12 +146,50 @@ loading rebuilt the original 2,573 sections. HUD upload resumed after free editi
 and real Blender input opened/closed Minecraft's inventory. All four checks passed
 with no host errors; this is a travel regression, not a long-duration memory test.
 
+## Stage 4 — Minecraft atmosphere and session shutdown
+
+- Minecraft's final 16×16 lightmap is copied asynchronously to Blender. Block and
+  sky light remain separate, including night vision, darkness, brightness settings
+  and dimension-specific light colors. World meshes retain vanilla face shading.
+- Sky/fog colors, celestial angles, moon phase textures and rain/snow columns come
+  from Minecraft. Blender draws the sky and precipitation into its own viewport.
+  Environment textures are read from the installed game/resources at runtime.
+- The atmosphere checkbox restores an unobstructed Blender editing view when
+  desired. It does not change native Blender materials, lights or world data.
+- **Save & Quit Minecraft** invokes Minecraft's normal save/exit path and leaves
+  Blender open. Closing Blender also saves/exits Minecraft after a short grace
+  period. `--keep-minecraft` retains the development reconnect workflow.
+- Command text waits for a confirmed ChatScreen before typing, including startup
+  loading transitions.
+
+All ten real-session checks completed: day, night, night vision, rain, snow,
+Nether, End, return to Overworld, sun and moon presentation. At
+midnight, sky-lit palette RGB changed from `(255,255,255)` to `(71,71,129)` while
+maximum block light stayed `(255,255,255)`. Night vision raised dark/sky light
+again. Day, night, rain, snow, sun, moon and End captures were visually inspected. Native Blender
+objects retained their own lighting, as intended for editable scene objects.
+
+Shutdown checks verified server save logs and process exit, as well as preserved
+native object transforms, vertex count, material and modifier names after the
+Save & Quit operator. A fresh process restored the same inventory and position;
+a real server block query also confirmed the saved gold-block marker persisted.
+GPU culling comparisons were repeated with atmosphere shading enabled: both
+perspective and orthographic views still produced identical pixels.
+With atmosphere enabled the local free-view sample averaged 50.22 FPS; this is
+another short local sample, not a cross-machine performance guarantee.
+Drivers: `scripts/verify_environment.py` and
+`scripts/verify_lifecycle_in_blender.py`; local results are in
+`artifacts/environment-tests.json` and `artifacts/lifecycle/`.
+
 ## Remaining work
 
 - Combat, physical portal traversal, enchantment and more vanilla systems need
   end-to-end tests; tested systems still need broader item/recipe/block coverage.
-- Sky, weather, fog, night lighting, some special entity effects and sound routing
-  need host-specific presentation. Audio currently comes from Minecraft.
+- Clouds, exact vanilla star/End-sky presentation, some special entity effects
+  and sound routing need more work. Audio currently comes from Minecraft.
+- Minecraft fog/lightmap shading currently affects Minecraft meshes; native
+  Blender objects keep their own scene lighting. Weather data follows the player;
+  native Blender roofs and distant free-camera weather need further integration.
 - Broader hardware benchmarks, GPU texture upload cost during play, and long-session
   memory profiling require more work.
 - Fast animated Blender objects, riding moving platforms, Blender actor damage,

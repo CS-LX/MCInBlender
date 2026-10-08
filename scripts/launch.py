@@ -42,7 +42,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only',choices=['blender','minecraft','build'])
     ap.add_argument('--test-input',action='store_true',help='Enable Blender event simulation for integration tests')
-    ap.add_argument('--verification',choices=['fusion','performance'],help='Run Blender integration checks in an isolated instance')
+    ap.add_argument('--keep-minecraft',action='store_true',help='Developer mode: keep Minecraft alive when Blender closes, for host reconnect tests')
+    ap.add_argument('--verification',choices=['fusion','performance','lifecycle'],help='Run Blender integration checks in an isolated instance')
     ap.add_argument('--world',choices=['scene','normal'],default='scene')
     ap.add_argument('--blend',type=Path,help='Use models from this .blend file as the host scene')
     args = ap.parse_args()
@@ -84,6 +85,7 @@ def main():
     if args.only in (None,'minecraft','build'):
         env = os.environ.copy()
         env['JAVA_HOME'] = java
+        env['MCIBLENDER_KEEP_MINECRAFT'] = '1' if args.keep_minecraft else '0'
         env['GRADLE_USER_HOME'] = str(ROOT/'.cache'/'gradle')
         env['MCIBLENDER_WORLD'] = args.world
         task = 'build' if args.only == 'build' else 'runClient'

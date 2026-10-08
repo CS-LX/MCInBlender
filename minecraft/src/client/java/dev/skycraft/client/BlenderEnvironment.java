@@ -13,11 +13,17 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import dev.skycraft.client.mixin.ContainerScreenAccessor;
+import org.joml.Vector3fc;
 
 /** Optional Blender render record 12. SkyCraft v11's existing messages stay unchanged. */
 public final class BlenderEnvironment {
     private static long next;
     private static String lastDimension = "";
+    private static int assetGeneration = Integer.MIN_VALUE;
+    private static String assetMoon = "";
+    private static net.minecraft.client.renderer.SkyRenderer skyExtractor;
+
+    public static void invalidateAssets() { assetGeneration = Integer.MIN_VALUE; }
 
     public static void send(Minecraft mc) {
         String dimension = mc.level == null ? "" : mc.level.dimension().identifier().toString();
@@ -35,6 +41,51 @@ public final class BlenderEnvironment {
             info.addProperty("gameTime", mc.level.getGameTime());
             info.addProperty("raining", mc.level.isRaining());
             info.addProperty("thundering", mc.level.isThundering());
+            var level = mc.gameRenderer.gameRenderState().levelRenderState;
+            var sky = new net.minecraft.client.renderer.state.level.SkyRenderState();
+            var weather = new net.minecraft.client.renderer.state.level.WeatherRenderState();
+            float partial = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+            // Linked mode skips LevelRenderer.render(), which normally creates its SkyRenderer.
+            if (skyExtractor == null) skyExtractor = new net.minecraft.client.renderer.SkyRenderer(
+                mc.getTextureManager(), mc.getAtlasManager(), mc.gameRenderer.mainRenderTarget());
+            skyExtractor.extractRenderState(mc.level, partial, mc.gameRenderer.mainCamera(), sky);
+            mc.levelRenderer.weatherEffectRenderer().extractRenderState(mc.level, partial, mc.gameRenderer.mainCamera().position(), weather);
+            String moon = sky.moonPhase == null ? "full_moon" : sky.moonPhase.toString().toLowerCase(java.util.Locale.ROOT);
+            if (assetGeneration != SkyLink.generation()) {
+                boolean sent = sendTexture(mc, 0, "celestial/sun") & sendTexture(mc, 2, "rain") &
+                    sendTexture(mc, 3, "snow") & sendTexture(mc, 4, "end_sky");
+                if (sent) assetGeneration = SkyLink.generation();
+                assetMoon = "";
+            }
+            if (!moon.equals(assetMoon) && sendTexture(mc, 1, "celestial/moon/" + moon)) assetMoon = moon;
+            JsonObject atmosphere = new JsonObject();
+            atmosphere.addProperty("skybox", sky.skybox == null ? "NONE" : sky.skybox.toString());
+            atmosphere.add("skyColor", vector(sky.skyColor));
+            atmosphere.addProperty("sunAngle", sky.sunAngle);
+            atmosphere.addProperty("moonAngle", sky.moonAngle);
+            atmosphere.addProperty("stars", sky.starBrightness);
+            atmosphere.addProperty("rainBrightness", sky.rainBrightness);
+            atmosphere.addProperty("rain", weather.intensity);
+            atmosphere.addProperty("skyFactor", mc.gameRenderer.gameRenderState().lightmapRenderState.skyFactor);
+            JsonArray faceShade = new JsonArray();
+            for (var direction : net.minecraft.core.Direction.values()) faceShade.add(mc.level.cardinalLighting().byFace(direction));
+            atmosphere.add("faceShade", faceShade);
+            if (level.cameraRenderState != null && level.cameraRenderState.fogData != null) {
+                var fog = level.cameraRenderState.fogData;
+                atmosphere.add("fogColor", vector(new org.joml.Vector3f(fog.color.x, fog.color.y, fog.color.z)));
+                atmosphere.addProperty("fogStart", fog.environmentalStart);
+                atmosphere.addProperty("fogEnd", fog.environmentalEnd);
+                atmosphere.addProperty("distanceStart", fog.renderDistanceStart);
+                atmosphere.addProperty("distanceEnd", fog.renderDistanceEnd);
+                atmosphere.addProperty("fogType", level.cameraRenderState.fogType.toString());
+            }
+            JsonArray rain = new JsonArray(), snow = new JsonArray();
+            for (var c : weather.rainColumns) rain.add(column(c));
+            for (var c : weather.snowColumns) snow.add(column(c));
+            atmosphere.add("rainColumns", rain);
+            atmosphere.add("snowColumns", snow);
+            info.add("atmosphere", atmosphere);
+            BlenderLightmap.capture(mc);
             if (mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
                 var pos = hit.getBlockPos();
                 JsonObject target = new JsonObject();
@@ -80,6 +131,39 @@ public final class BlenderEnvironment {
         }
         if (mc.gameMode != null) info.addProperty("gameMode", mc.gameMode.getPlayerMode().getName());
         SkyLink.tryWriteRender(12, ByteBuffer.wrap(info.toString().getBytes(StandardCharsets.UTF_8)), null);
+    }
+
+    private static boolean sendTexture(Minecraft mc, int id, String name) {
+        var resource = mc.getResourceManager().getResource(net.minecraft.resources.Identifier.withDefaultNamespace("textures/environment/" + name + ".png"));
+        if (resource.isEmpty()) return false;
+        try (var input = resource.get().open(); var image = com.mojang.blaze3d.platform.NativeImage.read(input)) {
+            int w = image.getWidth(), h = image.getHeight();
+            ByteBuffer pixels = ByteBuffer.allocate(w * h * 4);
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+                int argb = image.getPixel(x, y);
+                pixels.put((byte)(argb >> 16)).put((byte)(argb >> 8)).put((byte)argb).put((byte)(argb >>> 24));
+            }
+            ByteBuffer header = ByteBuffer.allocate(16).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(id).putInt(w).putInt(h).putInt(0).flip();
+            return SkyLink.tryWriteRender(14, header, pixels.flip());
+        } catch (java.io.IOException e) {
+            SkyCraft.LOG.warn("MCInBlender: cannot read environment texture {}", name, e);
+            return false;
+        }
+    }
+
+    private static JsonArray vector(Vector3fc value) {
+        JsonArray result = new JsonArray();
+        result.add(value == null ? 0 : value.x());
+        result.add(value == null ? 0 : value.y());
+        result.add(value == null ? 0 : value.z());
+        return result;
+    }
+
+    private static JsonArray column(net.minecraft.client.renderer.WeatherEffectRenderer.ColumnInstance c) {
+        JsonArray result = new JsonArray();
+        result.add(c.x()); result.add(c.z()); result.add(c.bottomY()); result.add(c.topY());
+        result.add(c.uOffset()); result.add(c.vOffset()); result.add(c.lightCoords());
+        return result;
     }
 
     private static JsonObject stackInfo(ItemStack stack) {
