@@ -21,7 +21,7 @@ def dispatch(session, data):
     elif action == 'look':
         session.yaw,session.pitch = data['yaw'],data['pitch']
     elif action == 'settings':
-        allowed = {'frustum_culling','camera_view','show_minecraft','environment',
+        allowed = {'frustum_culling','camera_view','show_minecraft','environment','overlay_height',
                    'native_lighting','native_sky_strength','native_block_strength','native_light_limit'}
         for name,value in data['values'].items():
             if name not in allowed:

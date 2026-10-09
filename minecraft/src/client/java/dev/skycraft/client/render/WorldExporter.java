@@ -75,6 +75,7 @@ public final class WorldExporter {
 	private static int meshesSent;
 	private static long nextPrune;
 	private static ClientLevel sentLevel;
+	private static boolean exportPaused;
 	private static SkyAtlas atlas;
 	private static ModelBlockRenderer blockRenderer;
 	private static FluidRenderer fluidRenderer;
@@ -105,6 +106,17 @@ public final class WorldExporter {
 		ClientLevel level = minecraft.level;
 		if (level == null || minecraft.player == null || !SkyLink.active()) {
 			return;
+		}
+		if (SkyCraft.BLENDER && (dev.skycraft.client.SkyClient.sky().flags & Proto.SKY_NO_WORLD_EXPORT) != 0) {
+			exportPaused = true;
+			// Chunk/light callbacks continue while invisible. A full snapshot is
+			// queued on resume, so retaining their unbounded dirty set is wasteful.
+			synchronized (DIRTY) { DIRTY.clear(); }
+			return;
+		}
+		if (exportPaused) {
+			exportPaused = false;
+			sentGeneration = Integer.MIN_VALUE;
 		}
 		if (sentGeneration != SkyLink.generation() || sentLevel != level || atlas == null || atlas.stale(minecraft)) {
 			resendEverything(minecraft, level);

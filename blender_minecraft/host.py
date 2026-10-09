@@ -94,10 +94,13 @@ class Session:
         controls(self)
         if self.closed:
             return
-        scale = min(1,1920/max(1,self.region.width),1080/max(1,self.region.height))
+        height = int(self.scene.mciblender.overlay_height)
+        scale = min(1,round(height*16/9)/max(1,self.region.width),height/max(1,self.region.height))
         self.width = max(64,round(self.region.width*scale))
         self.height = max(64,round(self.region.height*scale))
-        self.link.state(self.requested_position,self.yaw,self.pitch,self.width,self.height,self.teleport,self.collision.epoch)
+        export_world = self.scene.mciblender.show_minecraft or self.scene.mciblender.native_lighting
+        flags = 1 if export_world else 1 | P.NO_WORLD_EXPORT
+        self.link.state(self.requested_position,self.yaw,self.pitch,self.width,self.height,self.teleport,self.collision.epoch,flags=flags)
         self.link.heartbeat()
         player = self.link.player()
         if player:
@@ -274,7 +277,8 @@ class Session:
                                          upload_overlay=self.follow_camera or self.captured,
                                          environment=self.scene.mciblender.environment)
             else:
-                self.renderer.flush(upload_overlay=self.follow_camera or self.captured)
+                self.renderer.flush(upload_overlay=self.follow_camera or self.captured,world_visible=False)
+                self.renderer.record_frame()
         except Exception as exc:
             self.error(exc)
 
