@@ -64,7 +64,7 @@ class Start(bpy.types.Operator):
         from .host import Session
         try:
             package().SESSION = Session(context)
-            bpy.app.timers.register(tick)
+            bpy.app.timers.register(tick,first_interval=0.05)
         except Exception as exc:
             self.report({'ERROR'},str(exc))
             return {'CANCELLED'}
@@ -113,6 +113,9 @@ class Capture(bpy.types.Operator):
             self.report({'WARNING'},'Start the host and Minecraft first')
             return {'CANCELLED'}
         if self.session.captured:
+            return {'CANCELLED'}
+        if not self.session.collision.initialized:
+            self.report({'WARNING'},'Scene collision is still being prepared; see progress in the Minecraft sidebar')
             return {'CANCELLED'}
         self.session.captured = True
         self.session.play_view()
@@ -206,6 +209,19 @@ class Rebuild(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class CancelCollision(bpy.types.Operator):
+    bl_idname = 'mciblender.cancel_collision'
+    bl_label = 'Cancel Collision Update'
+    bl_description = 'Cancel pending work, keep completed collision, and pause automatic updates until the next manual update'
+
+    def execute(self, context):
+        session = package().SESSION
+        if session:
+            session.collision.cancel()
+            session.collision_paused = True
+        return {'FINISHED'}
+
+
 class EditScene(bpy.types.Operator):
     bl_idname = 'mciblender.edit_scene'
     bl_label = 'Edit Blender Scene'
@@ -275,6 +291,28 @@ class Panel(bpy.types.Panel):
             layout.operator('mciblender.start',icon='PLAY')
         else:
             layout.label(text='Connected' if session.link.alive else 'Waiting for Minecraft',icon='LINKED')
+            collision = session.collision
+            progress = collision.status()
+            box = layout.box()
+            box.label(text='Scene collision',icon='PHYSICS')
+            box.label(text=progress['phase'])
+            if collision.busy:
+                done, total = (collision.objects_done,collision.objects_total) if collision.building else (collision.regions_done,collision.regions_total)
+                unit = 'objects' if collision.building else 'regions'
+                box.progress(factor=done/max(1,total),type='BAR',text=f'{done}/{total} {unit}')
+                if collision.object_name:
+                    box.label(text=collision.object_name,icon='MESH_DATA')
+                if collision.building and collision.units_total:
+                    box.progress(factor=min(1,collision.units_done/collision.units_total),type='BAR',text='Current object')
+                box.label(text=f"Elapsed: {progress['elapsed']:.1f}s")
+                if not collision.initialized:
+                    box.operator('mciblender.stop',text='Cancel Startup',icon='CANCEL')
+                else:
+                    box.operator('mciblender.cancel_collision',icon='CANCEL')
+            if collision.error:
+                box.label(text=collision.error,icon='ERROR')
+            if session.collision_paused:
+                box.label(text='Automatic updates paused. Use Update below.')
             if not session.link.alive:
                 layout.operator('mciblender.launch_minecraft',icon='PLAY')
                 layout.label(text='Or launch the imported pack yourself')
@@ -292,7 +330,9 @@ class Panel(bpy.types.Panel):
                 box.prop(context.scene.mciblender,'native_sky_strength')
                 box.prop(context.scene.mciblender,'native_block_strength')
                 box.prop(context.scene.mciblender,'native_light_limit')
-            layout.operator('mciblender.rebuild')
+            row = layout.row()
+            row.enabled = not collision.building
+            row.operator('mciblender.rebuild')
             layout.prop(context.scene.mciblender,'command',text='')
             layout.operator('mciblender.command')
             layout.operator('mciblender.stop',icon='PAUSE')
@@ -301,4 +341,4 @@ class Panel(bpy.types.Panel):
                 layout.operator('mciblender.open_data',icon='ERROR')
 
 
-CLASSES = (Settings,Start,Stop,QuitGame,Capture,Command,Rebuild,EditScene,Demo,Panel)
+CLASSES = (Settings,Start,Stop,QuitGame,Capture,Command,Rebuild,CancelCollision,EditScene,Demo,Panel)

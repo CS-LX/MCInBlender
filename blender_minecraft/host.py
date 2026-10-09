@@ -46,6 +46,7 @@ class Session:
         self.camera_request_time = 0
         self.editor_view = None
         self.collision_dirty = False
+        self.collision_paused = False
         self.last_collision_update = 0
         self.collision_rebuilds = 0
         self.collider_signature = self.scene_signature()
@@ -113,10 +114,17 @@ class Session:
             self.position = self.player.position
             if self.follow_camera:
                 self.update_camera()
-        if self.window.scene == self.scene and self.collision_dirty and self.scene.mciblender.live_collision and time.monotonic()-self.last_collision_update>0.25:
+        if (self.window.scene == self.scene and self.collision_dirty and self.scene.mciblender.live_collision
+                and not self.collision.busy and not self.collision_paused
+                and time.monotonic()-self.last_collision_update>0.25):
             self.refresh_collision()
         self.collision.nearby(self.position)
         self.collision.flush(self.link)
+        with bpy.context.temp_override(window=self.window,area=self.area,region=self.region):
+            self.collision.step(bpy.context)
+        if self.collision.error:
+            self.collision_paused = True
+            self.error(RuntimeError(self.collision.error))
         for kind,payload in self.link.render_messages():
             self.renderer.accept(kind,payload)
         overlay = self.link.overlay()
@@ -131,13 +139,15 @@ class Session:
             self.renderer.entity_records = [raw[0x40+i*96:0x40+(i+1)*96] for i in range(min(160,count))]
         self.native_lighting.update(self)
         self.area.tag_redraw()
-        if time.monotonic()-self.last_snapshot>2:
+        if time.monotonic()-self.last_snapshot>(0.5 if self.collision.busy else 2):
             self.last_snapshot = time.monotonic()
             self.write_diagnostics()
 
     def refresh_collision(self):
         with bpy.context.temp_override(window=self.window,area=self.area,region=self.region):
-            self.collision.rebuild(bpy.context,incremental=True)
+            if not self.collision.rebuild(bpy.context,incremental=self.collision.initialized):
+                return
+        self.collision_paused = False
         self.collision.nearby(self.position)
         self.collision_dirty = False
         self.last_collision_update = time.monotonic()
@@ -298,6 +308,9 @@ class Session:
             status = 'PLAYING | Shift+Esc edits Blender scene' if self.captured else ('BLENDER EDIT | Minecraft continues simulating' if not self.follow_camera else 'Click Play or Edit Scene')
             if not self.link.alive:
                 status = 'Waiting for Minecraft bridge...'
+            if self.collision.busy:
+                c = self.collision
+                status += f' | {c.phase} | Objects {c.objects_done}/{c.objects_total}'
             if self.quitting:
                 status = 'Saving Minecraft world and quitting...'
             blf.draw(0,'MCInBlender | '+status)
@@ -331,6 +344,7 @@ class Session:
         data['editor_mode'] = not self.follow_camera
         data['camera_view'] = self.scene.mciblender.camera_view
         data['collision_rebuilds'] = self.collision_rebuilds
+        data['collision_progress'] = self.collision.status()
         data['performance'] = self.renderer.profile()
         data['lightmap_samples'] = self.renderer.lightmap_samples
         data['native_lighting'] = self.native_lighting.summary
@@ -347,6 +361,7 @@ class Session:
         if self.closed:
             return
         self.closed = True
+        self.collision.close()
         self.native_lighting.close()
         for handle in self.draw_handles:
             bpy.types.SpaceView3D.draw_handler_remove(handle,'WINDOW')

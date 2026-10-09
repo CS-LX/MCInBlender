@@ -18,6 +18,20 @@ Blender 是窗口、输入、摄像机和场景渲染的宿主。Minecraft 在�
 Shift+Esc 后可以继续使用 Blender 的建模、材质、修改器和自由视图。
 游戏可能继续模拟；需要暂停时先打开 Minecraft 的 Esc 菜单。
 
+## 复杂场景启动与进度
+
+点击 **Start Blender Host** 后，场景碰撞会分批准备，侧栏 **Scene collision**
+显示当前阶段、对象名称、对象/区域进度和耗时。可以继续操作 Blender；
+首次准备时可点 **Cancel Startup** 停止宿主，之后可再次启动。
+
+**Update Blender Collision** 和自动碰撞更新同样分批执行。更新时保留已有碰撞；
+**Cancel Collision Update** 保留已完成的碰撞并暂停自动更新，点击
+**Update Blender Collision** 可重新开始。修改会合并到下一次更新，避免同时运行多个导出任务。
+
+Blender 的单次修改器求值和碰撞树构建仍是不可中断的 API 调用；极高面数的单个对象
+仍可能短暂停顿，侧栏会显示该对象名称。装饰物可设置 `mc_collision = false`，
+不参与碰撞准备。进度写入诊断文件 `logs/host-status.json` 的 `collision_progress`。
+
 ## 四种视角
 
 - **First Person**：第一人称。

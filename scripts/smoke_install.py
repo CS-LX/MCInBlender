@@ -56,6 +56,13 @@ def main():
     print(result.stdout)
     if 'MCIBLENDER_INSTALLED ' not in result.stdout:
         raise RuntimeError('Blender did not confirm installation')
+    collision = subprocess.run([str(blender), '--background', '--python-exit-code', '1',
+        '--python', str(ROOT/'scripts/verify_async_collision.py'), '--', '--installed'],
+        env=env, cwd=ROOT, check=True, capture_output=True, text=True,
+        encoding='utf8', errors='replace', timeout=120)
+    print(collision.stdout)
+    if 'ASYNC_COLLISION_PASS ' not in collision.stdout:
+        raise RuntimeError('Packaged collision export regression did not complete')
 
 
 if __name__ == '__main__':
