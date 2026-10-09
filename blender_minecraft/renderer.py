@@ -9,6 +9,7 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 from . import protocol as P
+from .section_batches import SectionBatches
 
 DTYPE = np.dtype([('position','<f4',3), ('uv','<f4',2), ('color','u1',4), ('light','<u4'), ('flags','<u4')])
 
@@ -67,6 +68,10 @@ class ViewportRenderer:
         self.atmosphere = None
         self.texture_pixels = {}
         self.sections = {}
+        self.opaque_sections = {}
+        self.opaque_bounds = {}
+        self.section_batches = SectionBatches()
+        self.batch_sections = True
         self.section_bounds = {}
         self.bounds_dirty = True
         self.section_keys = ()
@@ -78,6 +83,8 @@ class ViewportRenderer:
         self.overlay_texture = None
         self.overlay_frame = 0
         self.overlay_size = (0,0)
+        self.overlay_float = None
+        self.overlay_buffer = None
         self.counts = Counter()
         self.errors = []
         self.solids, self.dug, self.lights = {}, {}, {}
@@ -93,6 +100,9 @@ class ViewportRenderer:
         self.counts[kind] += 1
         if kind == 3:
             self.sections.clear()
+            self.opaque_sections.clear()
+            self.opaque_bounds.clear()
+            self.section_batches = SectionBatches()
             self.section_bounds.clear()
             self.bounds_dirty = True
             self.dynamic.clear()
@@ -138,7 +148,7 @@ class ViewportRenderer:
         else:
             self.errors.append(f'Unknown render kind {kind}')
 
-    def create_batches(self, kind, payload):
+    def create_batches(self, kind, payload, transparent_only=False):
         origin,batches,raw = P.mesh_payload(kind,payload)
         vertices = np.frombuffer(raw,dtype=DTYPE)
         pos = vertices['position'].copy()
@@ -156,6 +166,8 @@ class ViewportRenderer:
                 continue
             tri_flags = vertices['flags'][first:first+count:3]
             for translucent in (False,True):
+                if transparent_only and not translucent:
+                    continue
                 mask = ((tri_flags & 2) != 0) | bool(flags & 1)
                 indices = np.arange(first,first+count).reshape(-1,3)[mask == translucent].ravel()
                 if not len(indices):
@@ -172,8 +184,43 @@ class ViewportRenderer:
             bounds = (offset,np.zeros(3,dtype=np.float32))
         return tuple(offset),result,bounds
 
-    def flush(self, budget_ms=10, upload_overlay=True):
+    def upload_overlay(self):
+        if not self.overlay_pending:
+            return
+        w,h,flags,frame,pixels = self.overlay_pending
+        source = np.frombuffer(pixels,dtype=np.uint8).reshape(h,w,4)
+        if not flags & 1:
+            source = source[::-1]
+        if self.overlay_float is None or self.overlay_float.shape != source.shape:
+            self.overlay_float = np.empty(source.shape,dtype=np.float32)
+            # Buffer wraps this contiguous array: reuse it instead of allocating
+            # two full-size float images and a Python GPU buffer every frame.
+            self.overlay_buffer = gpu.types.Buffer('FLOAT',self.overlay_float.size,self.overlay_float)
+        np.multiply(source,np.float32(1/255),out=self.overlay_float,casting='unsafe')
+        self.overlay_texture = gpu.types.GPUTexture((w,h),format='RGBA8',data=self.overlay_buffer)
+        self.overlay_frame,self.overlay_size = frame,(w,h)
+        self.overlay_pending = None
+
+    def flush(self, budget_ms=6, upload_overlay=True, world_visible=True):
         flush_start = time.perf_counter()
+        if self.lightmap_pending is not None:
+            self.lightmap = texture(16,16,self.lightmap_pending)
+            pixels = np.frombuffer(self.lightmap_pending,dtype=np.uint8).reshape(16,16,4)
+            self.lightmap_samples = {'dark':pixels[0,0].tolist(),'sky':pixels[15,0].tolist(),'block':pixels[0,15].tolist()}
+            self.lightmap_pending = None
+        if not world_visible:
+            # Keep coalesced CPU payloads for an older client which cannot pause
+            # export; no hidden mesh, atlas or entity GPU work should run.
+            if upload_overlay:
+                self.upload_overlay()
+            elapsed = (time.perf_counter()-flush_start)*1000
+            self.performance.update(atlas_ms=0,mesh_upload_ms=0,overlay_upload_ms=elapsed,
+                                    flush_ms=elapsed,draw_calls=0,visible_sections=0,
+                                    cached_sections=len(self.sections))
+            # Coalesce animation updates while their atlas is invisible.
+            if self.atlas_patches:
+                self.atlas_patches = list({struct.unpack_from('<II',p):p for p in self.atlas_patches}.values())
+            return
         if self.shader is None:
             self.shader = make_shader()
             self.fullbright = texture(16,16,bytes([255])*(16*16*4))
@@ -188,11 +235,6 @@ class ViewportRenderer:
                     continue
                 self.texture_pixels[ident] = (w,h,bytearray(pixels))
                 self.textures[ident] = texture(w,h,pixels)
-        if self.lightmap_pending is not None:
-            self.lightmap = texture(16,16,self.lightmap_pending)
-            pixels = np.frombuffer(self.lightmap_pending,dtype=np.uint8).reshape(16,16,4)
-            self.lightmap_samples = {'dark':pixels[0,0].tolist(),'sky':pixels[15,0].tolist(),'block':pixels[0,15].tolist()}
-            self.lightmap_pending = None
         atlas_start = time.perf_counter()
         if self.atlas_patches and 0 in self.texture_pixels:
             w,h,pixels = self.texture_pixels[0]
@@ -210,9 +252,11 @@ class ViewportRenderer:
         mesh_start = time.perf_counter()
         while self.pending and time.perf_counter()<deadline:
             key,(kind,payload) = self.pending.popitem(last=False)
-            result = self.create_batches(kind,payload)
+            result = self.create_batches(kind,payload,transparent_only=kind==2 and self.batch_sections)
             if kind == 2:
-                if result[1]:
+                if self.batch_sections:
+                    self.section_batches.update(payload)
+                if struct.unpack_from('<I',payload,12)[0]:
                     self.sections[key[1:]] = result[:2]
                     self.section_bounds[key[1:]] = result[2]
                 else:
@@ -221,16 +265,23 @@ class ViewportRenderer:
                 self.bounds_dirty = True
             else:
                 self.dynamic[kind] = result[:2]
+        # At least one group can settle each frame even during a section backlog.
+        # Old batches remain visible until their complete replacement is ready.
+        built = 0
+        while self.section_batches.dirty and (built == 0 or time.perf_counter()<deadline):
+            key,payload = self.section_batches.pop()
+            result = self.create_batches(2,payload)
+            if result[1]:
+                self.opaque_sections[key] = result[:2]
+                self.opaque_bounds[key] = result[2]
+            else:
+                self.opaque_sections.pop(key,None)
+                self.opaque_bounds.pop(key,None)
+            built += 1
         self.performance['mesh_upload_ms'] = (time.perf_counter()-mesh_start)*1000
         overlay_start = time.perf_counter()
-        if self.overlay_pending and upload_overlay:
-            w,h,flags,frame,pixels = self.overlay_pending
-            if not flags & 1:
-                pixels = np.frombuffer(pixels,dtype=np.uint8).reshape(h,w,4)[::-1].copy().tobytes()
-            self.overlay_texture = texture(w,h,pixels)
-            self.overlay_frame = frame
-            self.overlay_size = (w,h)
-            self.overlay_pending = None
+        if upload_overlay:
+            self.upload_overlay()
         self.performance['overlay_upload_ms'] = (time.perf_counter()-overlay_start)*1000
         from .entity_geometry import build
         pos,uv,color,solid = build(self.entity_records)
@@ -278,6 +329,8 @@ class ViewportRenderer:
         visible_sections = 0
         self.flush(upload_overlay=upload_overlay)
         if not self.shader or not player or not player.in_world:
+            self.performance.update(draw_calls=0,visible_sections=0,cached_sections=len(self.sections))
+            self.record_frame(frame_start)
             return
         blend,depth,mask = gpu.state.blend_get(),gpu.state.depth_test_get(),gpu.state.depth_mask_get()
         try:
@@ -308,6 +361,15 @@ class ViewportRenderer:
             else:
                 groups = list(self.sections.values())
             visible_sections = len(groups)
+            # Opaque geometry is grouped into 64-block cells. Transparent
+            # sections retain their original back-to-front sorting below.
+            if self.opaque_sections:
+                keys = tuple(self.opaque_sections)
+                from .visibility import visible_bounds
+                visible = visible_bounds([self.opaque_bounds[k][0] for k in keys],
+                                         [self.opaque_bounds[k][1] for k in keys],transform) if culling else np.ones(len(keys),dtype=bool)
+                groups.extend(self.opaque_sections[keys[i]] for i in np.flatnonzero(visible))
+            groups = [g for g in groups if g[1]]
             if self.entity_batches:
                 groups.append(((0,0,0),self.entity_batches))
             if 6 in self.dynamic:
@@ -322,11 +384,12 @@ class ViewportRenderer:
                     eye = context.region_data.view_matrix.inverted().translation
                     groups.sort(key=lambda g:(Vector(g[0])-eye).length_squared,reverse=True)
                 for origin,batches in groups:
+                    batches = [b for b in batches if b[1] == translucent and b[0] in self.textures]
+                    if not batches:
+                        continue
                     self.shader.uniform_float('transform',transform @ Matrix.Translation(origin))
                     self.shader.uniform_float('worldOrigin',origin)
                     for tex,is_transparent,batch in batches:
-                        if is_transparent != translucent or tex not in self.textures:
-                            continue
                         self.shader.uniform_sampler('atlas',self.textures[tex])
                         batch.draw(self.shader)
                         draw_calls += 1
@@ -339,7 +402,12 @@ class ViewportRenderer:
             gpu.state.depth_test_set(depth)
             gpu.state.depth_mask_set(mask)
             self.performance.update(draw_calls=draw_calls,visible_sections=visible_sections,cached_sections=len(self.sections))
-            self.frame_samples.append((time.perf_counter(),(time.perf_counter()-frame_start)*1000,self.performance.copy()))
+            self.record_frame(frame_start)
+
+    def record_frame(self, started=None):
+        now = time.perf_counter()
+        elapsed = (now-started)*1000 if started is not None else self.performance.get('flush_ms',0)
+        self.frame_samples.append((now,elapsed,self.performance.copy()))
 
     def profile(self):
         if len(self.frame_samples)<2:
@@ -350,6 +418,8 @@ class ViewportRenderer:
         result['draw_total_ms'] = round(sum(p[1] for p in self.frame_samples)/len(self.frame_samples),3)
         result['viewport_fps'] = round((len(self.frame_samples)-1)/max(duration,0.001),2)
         result['pending_meshes'] = len(self.pending)
+        result['opaque_groups'] = len(self.opaque_sections)
+        result['pending_groups'] = len(self.section_batches.dirty)
         return result
 
     def draw_selection(self, context):

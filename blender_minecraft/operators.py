@@ -1,4 +1,5 @@
 import math
+import time
 import bpy
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 from . import keys
@@ -14,11 +15,14 @@ def tick():
     session = package().SESSION
     if not session or session.closed:
         return None
+    started = time.perf_counter()
     try:
         session.tick()
     except Exception as exc:
         session.error(exc)
-    return 1/60
+    # The timer delay starts AFTER tick() finishes. Adding a full frame here
+    # used to limit a 16 ms update to about 30 Hz before viewport drawing.
+    return max(0.001, 1/120-(time.perf_counter()-started))
 
 
 def camera_changed(settings, context):
@@ -35,6 +39,9 @@ class Settings(bpy.types.PropertyGroup):
     live_collision: BoolProperty(name='Live Blender collision',default=True)
     show_minecraft: BoolProperty(name='Show live Minecraft world',default=True)
     frustum_culling: BoolProperty(name='Cull offscreen Minecraft sections',default=True)
+    overlay_height: EnumProperty(name='HUD resolution',items=[
+        ('720','720p (Fast)','Lower hand and HUD transfer cost; Blender geometry stays full resolution'),
+        ('1080','1080p','Sharper hand and HUD with higher transfer cost')],default='720')
     environment: BoolProperty(name='Minecraft sky, lighting and weather',default=True)
     native_lighting: BoolProperty(name='Light Blender models from Minecraft',default=False,
         description='Use Material Preview and temporary scene lights for Minecraft daylight and nearby emitting blocks')
@@ -317,12 +324,16 @@ class Panel(bpy.types.Panel):
                 layout.operator('mciblender.launch_minecraft',icon='PLAY')
                 layout.label(text='Or launch the imported pack yourself')
             layout.label(text=f'{len(session.renderer.sections)} mesh sections')
+            fps = session.renderer.profile().get('viewport_fps')
+            if fps is not None and session.link.alive:
+                layout.label(text=f'Viewport: {fps:.1f} FPS')
             layout.prop(context.scene.mciblender,'camera_view')
             layout.operator('mciblender.capture',icon='PLAY')
             layout.label(text='Shift+Esc: return to Blender tools')
             layout.operator('mciblender.edit_scene',icon='EDITMODE_HLT')
             layout.prop(context.scene.mciblender,'live_collision')
             layout.prop(context.scene.mciblender,'show_minecraft')
+            layout.prop(context.scene.mciblender,'overlay_height')
             layout.prop(context.scene.mciblender,'environment')
             layout.prop(context.scene.mciblender,'native_lighting')
             if context.scene.mciblender.native_lighting:

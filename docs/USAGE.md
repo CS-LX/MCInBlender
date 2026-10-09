@@ -66,6 +66,15 @@ Blender 的单次修改器求值和碰撞树构建仍是不可中断的 API 调�
 - **Minecraft sky, lighting and weather** 控制游戏天空、雾、昼夜和降水。
 - **Light Blender models from Minecraft** 使用材质预览和临时灯光，让原生模型受到游戏昼夜和附近发光方块照射。
 
+侧栏 **Viewport** 显示实际视图刷新率。**HUD resolution** 默认 720p，以降低后台游戏
+手部、菜单和 HUD 的传输成本；可切到 1080p。Blender 模型和 Minecraft 世界网格
+仍以视口原始分辨率绘制，此设置只影响 HUD/手部图层。
+
+只玩 Blender 白盒地图时，可关闭 **Show live Minecraft world**。新版宿主与模组会
+暂停不可见地形和动画图集导出，保留 Minecraft 模拟、输入和 HUD。重新开启会同步
+当前世界的新快照；若启用 Minecraft 对 Blender 模型的灯光，仍需接收世界灯光数据。
+可见世界的不透明网格按附近区块合并绘制，透明网格保留按区块排序。
+
 临时灯光会在停止宿主、禁用或保存 `.blend` 时清理。原有灯光/材质不会被替换。
 目前 Minecraft 方块对原生对象的阴影遮挡、原生对象的 Minecraft 雾效和屋顶挡雨尚不完整。
 

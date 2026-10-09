@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 MAGIC, VERSION = 0x43594B53, 11
 NAME = r"Local\MCInBlender_SkyCraft_v11"
+# Optional Blender hint: old clients ignore it and keep the original behavior.
+NO_WORLD_EXPORT = 1 << 8
 SKY, MC, OVERLAY, OVERLAY_HEADERS = 0x100, 0x200, 0x300, 0x340
 INPUT, ACTORS, EVENTS, ENTITIES = 0x1000, 0x12000, 0x17000, 0x1C000
 COLLISION, COLLISION_BYTES = 0x20000, 32 << 20
