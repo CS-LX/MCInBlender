@@ -6,6 +6,7 @@ ordinary load/store is insufficient because the Java writer can exchange too.
 import ctypes
 import mmap
 import os
+import secrets
 import struct
 import time
 from pathlib import Path
@@ -14,6 +15,11 @@ from . import protocol as P
 
 class HostLink:
     def __init__(self, name=P.NAME):
+        # Initialize ownership before acquiring resources so a failed constructor
+        # can use the same cleanup path as a normal shutdown.
+        self.closed = True
+        self.m = self.mutex = None
+        self.address = 0
         if os.name != 'nt':
             raise OSError('The SkyCraft shared-memory transport requires Windows')
         self.k32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -31,6 +37,7 @@ class HostLink:
         self.atomic.mc_exchange64.restype = ctypes.c_int64
         self.atomic.mc_load64.argtypes = [ctypes.c_void_p]
         self.atomic.mc_load64.restype = ctypes.c_int64
+        ctypes.set_last_error(0)
         self.mutex = self.k32.CreateMutexW(None, False, name + '_blender_owner')
         if not self.mutex:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -38,21 +45,35 @@ class HostLink:
             self.k32.CloseHandle(self.mutex)
             self.mutex = None
             raise RuntimeError('A Blender host already owns this session')
-        self.m = mmap.mmap(-1, P.SIZE, tagname=name)
-        self.address = ctypes.addressof(ctypes.c_char.from_buffer(self.m))
-        for base, n in [(0, 0x1000), (P.INPUT, 0x80), (P.ACTORS, 0x40),
-                        (P.EVENTS, 0x80), (P.ENTITIES, 0x40), (P.COLLISION, 0x80), (P.RENDER, 0x80)]:
-            self.m[base:base+n] = bytes(n)
-        struct.pack_into('<IIII', self.m, 0, P.MAGIC, P.VERSION, os.getpid(), 0)
-        self.front, self.seq = 2, 0
-        self.closed = False
+        try:
+            self.m = mmap.mmap(-1, P.SIZE, tagname=name)
+            self.address = ctypes.addressof(ctypes.c_char.from_buffer(self.m))
+            self.atomic.mc_exchange64(self.address + 0x10, 0)
+            self.atomic.mc_exchange64(self.address + P.HOST_GENERATION, 0)
+            for base, n in [(0, 0x1000), (P.INPUT, 0x80), (P.ACTORS, 0x40),
+                            (P.EVENTS, 0x80), (P.ENTITIES, 0x40), (P.COLLISION, 0x80), (P.RENDER, 0x80)]:
+                self.m[base:base+n] = bytes(n)
+            struct.pack_into('<IIII', self.m, 0, P.MAGIC, P.VERSION, os.getpid(), 0)
+            self.front, self.seq = 2, 0
+            self.closed = False
+            self.generation = secrets.randbits(63) or 1
+            self.store64(P.HOST_GENERATION, self.generation)
+        except BaseException:
+            self._release_resources()
+            raise
         # Stay offline until Session publishes its first complete state. A live
         # zero-filled state can teleport an already running client underground.
 
+    def _require_open(self):
+        if self.closed or not self.address:
+            raise RuntimeError('Blender host connection is closed')
+
     def atomic_load64(self, offset):
+        self._require_open()
         return self.atomic.mc_load64(self.address + offset)
 
     def store64(self, offset, value):
+        self._require_open()
         self.atomic.mc_exchange64(self.address + offset, value)
 
     def heartbeat(self):
@@ -60,11 +81,18 @@ class HostLink:
 
     @property
     def alive(self):
+        if self.closed:
+            return False
+        acknowledged = self.atomic_load64(P.CLIENT_GENERATION)
+        # A v11 client predating the restart handshake leaves this field zero.
+        if acknowledged not in (0, self.generation):
+            return False
         beat = self.atomic_load64(0x18)
         return beat > 0 and 0 <= self.k32.GetTickCount64() - beat < 5000
 
     def state(self, position=(0, 100, 0), yaw=0, pitch=0, width=1280, height=720,
               teleport=1, epoch=1, world=0x3C, flags=1, hour=12):
+        self._require_open()
         width, height = max(64, min(3840, int(width))), max(64, min(2160, int(height)))
         self.seq = (self.seq + 2) & 0xFFFFFFFE
         self.atomic.mc_exchange32(self.address + P.SKY, self.seq - 1)
@@ -73,6 +101,7 @@ class HostLink:
         self.atomic.mc_exchange32(self.address + P.SKY, self.seq)
 
     def snapshot(self, base, size):
+        self._require_open()
         for _ in range(8):
             before, = struct.unpack_from('<I', self.m, base)
             if before == 0 or before & 1:
@@ -147,6 +176,7 @@ class HostLink:
         return result
 
     def overlay(self):
+        self._require_open()
         state, = struct.unpack_from('<I', self.m, P.OVERLAY)
         if not state & 4:
             return None
@@ -166,10 +196,28 @@ class HostLink:
         if self.closed:
             return
         try:
-            self.input(6)
-        except BufferError:
-            pass
-        self.store64(0x10, 0)
-        self.m.close()
-        self.k32.CloseHandle(self.mutex)
+            try:
+                self.input(6)
+            except BufferError:
+                pass
+            finally:
+                try:
+                    self.store64(P.HOST_GENERATION, 0)
+                finally:
+                    self.store64(0x10, 0)
+        finally:
+            self._release_resources()
+
+    def _release_resources(self):
+        # Invalidate the native pointer before releasing the mapping. A stale
+        # panel/modal callback must never call a DLL with an unmapped address.
         self.closed = True
+        self.address = 0
+        mapping, self.m = self.m, None
+        mutex, self.mutex = self.mutex, None
+        try:
+            if mapping is not None:
+                mapping.close()
+        finally:
+            if mutex:
+                self.k32.CloseHandle(mutex)

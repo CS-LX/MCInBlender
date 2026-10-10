@@ -21,6 +21,22 @@ from .paths import data_root
 
 class Session:
     def __init__(self, context):
+        self.closed = False
+        self.errors = []
+        self.draw_handles = []
+        self.collision = self.native_lighting = self.link = None
+        self.captured = False
+        self.capture_operator = None
+        self.original = None
+        try:
+            self._initialize(context)
+        except BaseException:
+            self.close()
+            raise
+
+    def _initialize(self, context):
+        if not context.area or context.area.type != 'VIEW_3D':
+            raise RuntimeError('Start the Blender host from a 3D View')
         self.area = context.area
         self.window = context.window
         self.region = next(r for r in self.area.regions if r.type == 'WINDOW')
@@ -28,7 +44,7 @@ class Session:
         self.scene = context.scene
         self.original = (self.space.region_3d.view_rotation.copy(),self.space.region_3d.view_location.copy(),
                          self.space.region_3d.view_distance,self.space.region_3d.view_perspective,
-                         self.space.lens,self.space.overlay.show_overlays)
+                         self.space.lens,self.space.overlay.show_overlays,self.space.show_gizmo,self.space.clip_end)
         self.renderer = ViewportRenderer()
         self.native_lighting = NativeLighting(self.scene,self.space)
         self.collision = SceneCollision()
@@ -58,20 +74,33 @@ class Session:
         self.errors = []
         self.tick_count = 0
         self.last_snapshot = 0
+        self.last_panel_redraw = 0
         self.capture_name = None
         self.commands = deque()
         self.command_stage = 0
         self.command_time = 0
         self.width,self.height = 1280,720
-        self.draw_handles = [bpy.types.SpaceView3D.draw_handler_add(self.draw_world,(),'WINDOW','POST_VIEW'),
-                             bpy.types.SpaceView3D.draw_handler_add(self.draw_overlay,(),'WINDOW','POST_PIXEL')]
+        self.draw_handles.append(bpy.types.SpaceView3D.draw_handler_add(self.draw_world,(),'WINDOW','POST_VIEW'))
+        self.draw_handles.append(bpy.types.SpaceView3D.draw_handler_add(self.draw_overlay,(),'WINDOW','POST_PIXEL'))
         self.space.overlay.show_overlays = not self.follow_camera
         self.space.clip_end = max(1000,self.space.clip_end)
         self.collision.nearby(self.position)
         self.camera_request = {'FIRST':0,'THIRD_BACK':1,'THIRD_FRONT':2,'BLENDER':1}[context.scene.mciblender.camera_view]
 
     def correct_context(self):
-        return bpy.context.area == self.area and bpy.context.region == self.region and bpy.context.scene == self.scene
+        return not self.closed and bpy.context.area == self.area and bpy.context.region == self.region and bpy.context.scene == self.scene
+
+    def context_valid(self):
+        # An area can be closed or changed without loading a .blend file.
+        try:
+            return (self.window in bpy.context.window_manager.windows[:]
+                    and self.window.scene == self.scene
+                    and self.area in self.window.screen.areas[:]
+                    and self.area.type == 'VIEW_3D'
+                    and self.area.spaces.active == self.space
+                    and self.region in self.area.regions[:])
+        except ReferenceError:
+            return False
 
     def error(self, exc):
         text = ''.join(traceback.format_exception(exc))
@@ -82,13 +111,15 @@ class Session:
     def tick(self):
         if self.closed:
             return
+        if not self.context_valid():
+            from . import stop_session
+            stop_session(expected=self)
+            return
         self.tick_count += 1
         if self.quitting and not self.link.alive:
             self.write_diagnostics()
-            self.close()
-            from . import __name__ as package_name
-            import sys
-            sys.modules[package_name].SESSION = None
+            from . import stop_session
+            stop_session(expected=self)
             return
         from .diagnostics import controls
         controls(self)
@@ -141,7 +172,11 @@ class Session:
             self.renderer.selection = struct.unpack_from('<6f',raw,12) if selected else None
             self.renderer.entity_records = [raw[0x40+i*96:0x40+(i+1)*96] for i in range(min(160,count))]
         self.native_lighting.update(self)
-        self.area.tag_redraw()
+        self.region.tag_redraw()
+        now = time.monotonic()
+        if now-self.last_panel_redraw > (0.1 if self.collision.busy else 0.5):
+            self.last_panel_redraw = now
+            self.area.tag_redraw()
         if time.monotonic()-self.last_snapshot>(0.5 if self.collision.busy else 2):
             self.last_snapshot = time.monotonic()
             self.write_diagnostics()
@@ -220,13 +255,23 @@ class Session:
             eye += forward*player.camera_distance
             forward.negate()
         rv = self.space.region_3d
-        rv.view_perspective = 'PERSP'
-        rv.view_rotation = forward.to_track_quat('-Z','Y')
-        rv.view_distance = 0.01
-        rv.view_location = eye+forward*0.01
+        # Reassigning unchanged RNA view properties invalidates Blender's own
+        # viewport caches. Update only the fields that actually moved.
+        rotation = forward.to_track_quat('-Z','Y')
+        location = eye+forward*0.01
+        if rv.view_perspective != 'PERSP':
+            rv.view_perspective = 'PERSP'
+        if rv.view_rotation != rotation:
+            rv.view_rotation = rotation
+        if abs(rv.view_distance-0.01) > 1e-7:
+            rv.view_distance = 0.01
+        if rv.view_location != location:
+            rv.view_location = location
         # Blender's viewport uses a 32 mm sensor across the longer viewport axis.
         aspect = self.region.width/max(1,self.region.height)
-        self.space.lens = 16/(math.tan(math.radians(max(10,min(150,player.fov)))/2)*max(1,aspect))
+        lens = 16/(math.tan(math.radians(max(10,min(150,player.fov)))/2)*max(1,aspect))
+        if abs(self.space.lens-lens) > 1e-5:
+            self.space.lens = lens
 
     def command(self, text):
         self.commands.append(text.lstrip('/'))
@@ -271,14 +316,11 @@ class Session:
         if not self.correct_context() or self.closed:
             return
         try:
-            if self.scene.mciblender.show_minecraft:
-                self.renderer.draw_world(bpy.context,self.player,show_selection=self.follow_camera,
-                                         culling=self.scene.mciblender.frustum_culling,
-                                         upload_overlay=self.follow_camera or self.captured,
-                                         environment=self.scene.mciblender.environment)
-            else:
-                self.renderer.flush(upload_overlay=self.follow_camera or self.captured,world_visible=False)
-                self.renderer.record_frame()
+            self.renderer.draw_world(bpy.context,self.player,show_selection=self.follow_camera,
+                                     culling=self.scene.mciblender.frustum_culling,
+                                     upload_overlay=self.follow_camera or self.captured,
+                                     environment=self.scene.mciblender.environment,
+                                     world_visible=self.scene.mciblender.show_minecraft)
         except Exception as exc:
             self.error(exc)
 
@@ -350,6 +392,8 @@ class Session:
         data['collision_rebuilds'] = self.collision_rebuilds
         data['collision_progress'] = self.collision.status()
         data['performance'] = self.renderer.profile()
+        data['render_warnings'] = self.renderer.errors
+        data['hud_byte_upload'] = self.renderer.byte_overlay
         data['lightmap_samples'] = self.renderer.lightmap_samples
         data['native_lighting'] = self.native_lighting.summary
         data['environment_textures'] = list(self.renderer.environment_textures)
@@ -365,12 +409,33 @@ class Session:
         if self.closed:
             return
         self.closed = True
-        self.collision.close()
-        self.native_lighting.close()
-        for handle in self.draw_handles:
-            bpy.types.SpaceView3D.draw_handler_remove(handle,'WINDOW')
-        self.link.close()
-        if self.follow_camera:
-            rv = self.space.region_3d
-            rv.view_rotation,rv.view_location,rv.view_distance,rv.view_perspective,self.space.lens,self.space.overlay.show_overlays = self.original
-        self.area.tag_redraw()
+        # Always release the transport even if a stale Blender RNA object or a
+        # cancelled export raises. No later callback may see this as active.
+        from . import __name__ as package_name
+        import sys
+        package = sys.modules[package_name]
+        if package.SESSION is self:
+            package.SESSION = None
+        def cleanup(action):
+            try:
+                action()
+            except Exception as exc:
+                self.error(exc)
+        if self.capture_operator is not None:
+            capture, self.capture_operator = self.capture_operator, None
+            cleanup(capture.release)
+        self.captured = False
+        handles, self.draw_handles = self.draw_handles, []
+        for handle in handles:
+            cleanup(lambda: bpy.types.SpaceView3D.draw_handler_remove(handle,'WINDOW'))
+        for resource in (self.link, self.collision, self.native_lighting):
+            if resource is not None:
+                cleanup(resource.close)
+        if self.original is not None:
+            def restore_view():
+                if getattr(self, 'follow_camera', False):
+                    rv = self.space.region_3d
+                    rv.view_rotation,rv.view_location,rv.view_distance,rv.view_perspective,self.space.lens = self.original[:5]
+                self.space.overlay.show_overlays,self.space.show_gizmo,self.space.clip_end = self.original[5:]
+                self.area.tag_redraw()
+            cleanup(restore_view)

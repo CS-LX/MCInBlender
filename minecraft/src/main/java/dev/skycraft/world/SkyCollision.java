@@ -49,6 +49,7 @@ public final class SkyCollision {
 	private static final Set<Long> KNOWN_REGIONS = ConcurrentHashMap.newKeySet();
 	private static volatile int epoch = -1;
 	private static Thread consumer;
+	private static int consumedGeneration = Integer.MIN_VALUE;
 
 	private SkyCollision() {
 	}
@@ -224,8 +225,14 @@ public final class SkyCollision {
 	/** Processes all pending collision messages. Returns true if anything was consumed. */
 	private static boolean drainOnce() {
 		MemorySegment s = SkyLink.segment();
-		if (s == null) {
+		if (s == null || !SkyLink.active()) {
 			return false;
+		}
+		int generation = SkyLink.generation();
+		if (generation != consumedGeneration) {
+			clear(-1);
+			CHANGED.clear();
+			consumedGeneration = generation;
 		}
 		long head = SkyLink.collisionHead();
 		long tail = SkyLink.collisionTail();
@@ -234,6 +241,7 @@ public final class SkyCollision {
 		}
 		long data = OFF_COLLISION_RING + CR_DATA;
 		while (tail < head) {
+			if (!SkyLink.active() || generation != SkyLink.generation()) return false;
 			long pos = tail % CR_DATA_BYTES;
 			int type = s.get(JAVA_INT, data + pos);
 			int payloadBytes = s.get(JAVA_INT, data + pos + 4);
@@ -250,6 +258,9 @@ public final class SkyCollision {
 			}
 			tail += align8(8 + payloadBytes);
 		}
+		// The host can replace its scene while a large triangle record is decoded.
+		// Never publish that old drain's tail into the newly reset collision ring.
+		if (!SkyLink.active() || generation != SkyLink.generation()) return false;
 		SkyLink.setCollisionTail(tail);
 		return true;
 	}

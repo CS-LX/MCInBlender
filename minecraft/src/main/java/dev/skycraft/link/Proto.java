@@ -129,6 +129,9 @@ public final class Proto {
 	public static final long H_MC_PID = 0x0C;
 	public static final long H_SKYRIM_HEARTBEAT = 0x10;
 	public static final long H_MC_HEARTBEAT = 0x18;
+	// Optional Blender session handshake in v11's unused header space; zero is legacy.
+	public static final long H_HOST_GENERATION = 0x20;
+	public static final long H_CLIENT_GENERATION = 0x28;
 
 	// SkyState (relative to OFF_SKY_STATE)
 	public static final long SS_SEQ = 0x00;

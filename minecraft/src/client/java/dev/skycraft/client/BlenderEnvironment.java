@@ -23,10 +23,16 @@ public final class BlenderEnvironment {
     private static long next;
     private static String lastDimension = "";
     private static int assetGeneration = Integer.MIN_VALUE;
+    private static int assetMask;
     private static String assetMoon = "";
     private static net.minecraft.client.renderer.SkyRenderer skyExtractor;
 
-    public static void invalidateAssets() { assetGeneration = Integer.MIN_VALUE; }
+    public static void invalidateAssets() {
+        assetGeneration = Integer.MIN_VALUE;
+        assetMask = 0;
+        assetMoon = "";
+        next = 0;
+    }
 
     public static void send(Minecraft mc) {
         String dimension = mc.level == null ? "" : mc.level.dimension().identifier().toString();
@@ -40,6 +46,8 @@ public final class BlenderEnvironment {
         info.addProperty("vanilla", SkyCraft.VANILLA);
         info.addProperty("screen", mc.gui.screen() == null ? "" : mc.gui.screen().getClass().getSimpleName());
         info.addProperty("paused", mc.isPaused());
+        info.addProperty("windowHidden", (org.lwjgl.sdl.SDLVideo.SDL_GetWindowFlags(mc.getWindow().handle()) &
+            org.lwjgl.sdl.SDLVideo.SDL_WINDOW_HIDDEN) != 0);
         if (mc.level != null) {
             info.addProperty("gameTime", mc.level.getGameTime());
             info.addProperty("raining", mc.level.isRaining());
@@ -55,10 +63,16 @@ public final class BlenderEnvironment {
             mc.levelRenderer.weatherEffectRenderer().extractRenderState(mc.level, partial, mc.gameRenderer.mainCamera().position(), weather);
             String moon = sky.moonPhase == null ? "full_moon" : sky.moonPhase.toString().toLowerCase(java.util.Locale.ROOT);
             if (assetGeneration != SkyLink.generation()) {
-                boolean sent = sendTexture(mc, 0, "celestial/sun") & sendTexture(mc, 2, "rain") &
-                    sendTexture(mc, 3, "snow") & sendTexture(mc, 4, "end_sky");
-                if (sent) assetGeneration = SkyLink.generation();
+                assetGeneration = SkyLink.generation();
+                assetMask = 0;
                 assetMoon = "";
+            }
+            // Retry each rejected asset independently; a full ring or a missing
+            // resource must not continuously re-read/re-upload the other images.
+            String[] names = { "celestial/sun", "rain", "snow", "end_sky" };
+            int[] ids = { 0, 2, 3, 4 };
+            for (int i = 0; i < names.length; i++) {
+                if ((assetMask & (1 << i)) == 0 && sendTexture(mc, ids[i], names[i])) assetMask |= 1 << i;
             }
             if (!moon.equals(assetMoon) && sendTexture(mc, 1, "celestial/moon/" + moon)) assetMoon = moon;
             JsonObject atmosphere = new JsonObject();

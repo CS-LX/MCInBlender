@@ -49,6 +49,20 @@ actual lightmap/celestial state; no native mesh or material conversion is needed
 These are emitted/accepted only with `-Dmciblender.host=true`, so the original
 SkyCraft Skyrim host is unaffected. Existing v11 record layouts are unchanged.
 
+The reserved header fields at `0x20` and `0x28` contain a 64-bit host generation
+nonce and its Minecraft acknowledgement. A fresh Host publishes a new nonzero
+nonce; state and heartbeat stay offline until initialization is complete. The
+client acknowledges the nonce before becoming active, resets per-session caches
+even if the Blender PID is unchanged, and rejects stale ring/overlay commits.
+Zero denotes a legacy v11 peer or an offline host. A successful Minecraft mapping
+handle stays open for the process lifetime so a stopped/restarted Blender Host
+reattaches to the same named Windows mapping.
+
+A render snapshot commits CLEAR before ATLAS and retries either rejected stage.
+Meshes wait until the atlas is accepted; an accepted CLEAR is never repeated by
+an atlas retry. Sky textures have independent retry state. Blender producers do
+not block for a full render ring; retained world records retry on later frames.
+
 | Direction | Record | Payload |
 | --- | --- | --- |
 | MC → Blender render ring | 12 | UTF-8 JSON, schema 1: dimension, vanilla mode, screen name, pause/time/weather, health/food/XP, held item, game mode, inventory counts, carried stack, container slots and GUI origin, targeted block |
