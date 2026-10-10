@@ -34,6 +34,7 @@ public final class FrameExporter {
 		int height;
 		volatile int state = FREE;
 		long frameId;
+		int generation;
 	}
 
 	private FrameExporter() {
@@ -88,6 +89,7 @@ public final class FrameExporter {
 		final Staging captured = slot;
 		captured.state = PENDING;
 		captured.frameId = nextFrameId++;
+		captured.generation = SkyLink.generation();
 		RenderSystem.getDevice().createCommandEncoder().copyTextureToBuffer(color, captured.buffer, 0L, () -> captured.state = READY, 0);
 	}
 
@@ -103,13 +105,13 @@ public final class FrameExporter {
 			return;
 		}
 		MemorySegment shm = SkyLink.segment();
-		if (shm != null) {
+		if (shm != null && SkyLink.active() && newest.generation == SkyLink.generation()) {
 			long bytes = (long) newest.width * newest.height * 4L;
 			try (GpuBufferSlice.MappedView view = newest.buffer.map(true, false)) {
 				MemorySegment src = MemorySegment.ofBuffer(view.data());
 				MemorySegment.copy(src, 0, shm, SkyLink.overlayBackSlotOffset(), Math.min(bytes, src.byteSize()));
 			}
-			SkyLink.publishOverlay(newest.width, newest.height, true, newest.frameId);
+			SkyLink.publishOverlay(newest.width, newest.height, true, newest.frameId, newest.generation);
 		}
 		// Anything older than what we just shipped is useless now.
 		for (Staging s : staging) {

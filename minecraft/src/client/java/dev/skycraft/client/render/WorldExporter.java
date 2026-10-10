@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.QuadInstance;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.skycraft.SkyCraft;
 import dev.skycraft.link.Proto;
+import dev.skycraft.link.RenderSnapshot;
 import dev.skycraft.link.SkyLink;
 import dev.skycraft.world.SkyClip;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
@@ -72,6 +73,8 @@ public final class WorldExporter {
 	private static final LongOpenHashSet DUG = new LongOpenHashSet(); // sections Skyrim holds dug cells for
 	private static final ByteBuffer LIGHTS = ByteBuffer.allocate(16 * 16 * 16 * 8).order(ByteOrder.LITTLE_ENDIAN);
 	private static int sentGeneration = Integer.MIN_VALUE;
+	private static final RenderSnapshot SNAPSHOT = new RenderSnapshot();
+	private static boolean snapshotPending;
 	private static int meshesSent;
 	private static long nextPrune;
 	private static ClientLevel sentLevel;
@@ -121,6 +124,23 @@ public final class WorldExporter {
 		if (sentGeneration != SkyLink.generation() || sentLevel != level || atlas == null || atlas.stale(minecraft)) {
 			resendEverything(minecraft, level);
 		}
+		// A rejected atlas must be retried before any mesh references it. Back pressure
+		// must not permanently leave Blender showing only the HUD and its own scene.
+		if (snapshotPending) {
+			if (!SNAPSHOT.send(() -> {
+				if (!SkyLink.tryWriteRender(Proto.REN_CLEAR_ALL, ByteBuffer.allocate(0), null)) return false;
+				// CLEAR also removes environment textures. Invalidate only once it is
+				// accepted, otherwise an early environment resend can be cleared later.
+				if (SkyCraft.BLENDER) dev.skycraft.client.BlenderEnvironment.invalidateAssets();
+				return true;
+			}, () -> {
+				ByteBuffer header = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+					.putInt(atlas.width).putInt(atlas.height).flip();
+				return SkyLink.tryWriteRender(Proto.REN_ATLAS, header, atlas.pixels.duplicate().clear());
+			})) return;
+			snapshotPending = false;
+			SkyCraft.LOG.info("SkyCraft: sent {}x{} texture atlas to host", atlas.width, atlas.height);
+		}
 		meshDirtySections(level);
 		if (dev.skycraft.SkyCraft.BLENDER && System.nanoTime() >= nextPrune) {
 			nextPrune = System.nanoTime() + 1_000_000_000L;
@@ -136,10 +156,9 @@ public final class WorldExporter {
 	}
 
 	private static void resendEverything(Minecraft minecraft, ClientLevel level) {
-		if (dev.skycraft.SkyCraft.BLENDER) dev.skycraft.client.BlenderEnvironment.invalidateAssets();
-		sentGeneration = SkyLink.generation();
-		sentLevel = level;
 		atlas = SkyAtlas.build(minecraft);
+		SNAPSHOT.reset();
+		snapshotPending = true;
 		SkyCraft.LOG.info("SkyCraft: {} animated textures (water, lava, fire, ...) will play in Skyrim", atlas.animatedSprites());
 		AvatarExporter.reset();
 		ICONS.clear();
@@ -147,10 +166,6 @@ public final class WorldExporter {
 		boolean ao = minecraft.options.ambientOcclusion().get();
 		blockRenderer = new ModelBlockRenderer(ao, true, minecraft.getBlockColors());
 		fluidRenderer = new FluidRenderer(minecraft.getModelManager().getFluidStateModelSet());
-		SkyLink.writeRender(Proto.REN_CLEAR_ALL, ByteBuffer.allocate(0), null);
-		ByteBuffer header = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(atlas.width).putInt(atlas.height).flip();
-		boolean ok = SkyLink.writeRender(Proto.REN_ATLAS, header, atlas.pixels.duplicate().clear());
-		SkyCraft.LOG.info("SkyCraft: sent {}x{} texture atlas to Skyrim ({})", atlas.width, atlas.height, ok ? "ok" : "FAILED");
 		SENT.clear();
 		LIT.clear();
 		SOLID.clear();
@@ -177,6 +192,10 @@ public final class WorldExporter {
 				}
 			}
 		}
+		// Commit initialization only after all setup succeeded. An exception above
+		// leaves this generation pending so the next frame can rebuild it.
+		sentGeneration = SkyLink.generation();
+		sentLevel = level;
 	}
 
 	private static void meshDirtySections(ClientLevel level) {

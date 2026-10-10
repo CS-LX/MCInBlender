@@ -6,6 +6,29 @@ bl_info = {'name':'Minecraft in Blender','author':'CS-LX; SkyCraft by chasmlol',
 SESSION = None
 
 
+def stop_session(expected=None):
+    """Detach callbacks first; cleanup must not leave a half-closed host live."""
+    import bpy
+    from .operators import tick
+    global SESSION
+    session = SESSION
+    if expected is not None and session is not expected:
+        return
+    SESSION = None
+    try:
+        if bpy.app.timers.is_registered(tick):
+            bpy.app.timers.unregister(tick)
+    finally:
+        if session:
+            session.close()
+
+
+def before_load(_):
+    # load_pre runs while the scene, area and any evaluated meshes are valid.
+    # Blender discards nonpersistent timers on load, but Python globals survive.
+    stop_session()
+
+
 def before_save(_):
     # Runtime helpers must not become permanent content of a user's .blend file.
     # The next session tick recreates them after the synchronous save completes.
@@ -34,24 +57,25 @@ def register():
     for cls in (*DISTRIBUTION_CLASSES, *CLASSES):
         bpy.utils.register_class(cls)
     bpy.types.Scene.mciblender = bpy.props.PointerProperty(type=Settings)
-    bpy.app.handlers.depsgraph_update_post.append(scene_changed)
-    bpy.app.handlers.save_pre.append(before_save)
+    for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, scene_changed),
+                               (bpy.app.handlers.save_pre, before_save),
+                               (bpy.app.handlers.load_pre, before_load)):
+        bpy.app.handlers.persistent(callback)
+        if callback not in handlers:
+            handlers.append(callback)
 
 
 def unregister():
     import bpy
-    from .operators import CLASSES, tick
+    from .operators import CLASSES
     from .distribution import CLASSES as DISTRIBUTION_CLASSES
-    global SESSION
-    if SESSION:
-        SESSION.close()
-        SESSION = None
-    if bpy.app.timers.is_registered(tick):
-        bpy.app.timers.unregister(tick)
+    stop_session()
     if scene_changed in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(scene_changed)
     if before_save in bpy.app.handlers.save_pre:
         bpy.app.handlers.save_pre.remove(before_save)
+    if before_load in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(before_load)
     del bpy.types.Scene.mciblender
     for cls in reversed((*DISTRIBUTION_CLASSES, *CLASSES)):
         bpy.utils.unregister_class(cls)

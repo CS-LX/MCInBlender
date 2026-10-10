@@ -85,6 +85,11 @@ class ViewportRenderer:
         self.overlay_size = (0,0)
         self.overlay_float = None
         self.overlay_buffer = None
+        self.overlay_uploader = None
+        self.byte_overlay = True
+        self.overlay_quad = None
+        self.overlay_quad_size = None
+        self.overlay_content = None
         self.counts = Counter()
         self.errors = []
         self.solids, self.dug, self.lights = {}, {}, {}
@@ -188,6 +193,27 @@ class ViewportRenderer:
         if not self.overlay_pending:
             return
         w,h,flags,frame,pixels = self.overlay_pending
+        content = (w,h,flags,pixels)
+        if content == self.overlay_content:
+            self.overlay_frame = frame
+            self.overlay_pending = None
+            return
+        if self.byte_overlay:
+            from .pixel_upload import ByteImage
+            try:
+                if self.overlay_uploader is None:
+                    self.overlay_uploader = ByteImage()
+                self.overlay_texture = self.overlay_uploader.upload(w,h,pixels,flip_y=not flags & 1)
+            except Exception as exc:
+                # Keep the HUD usable on a backend without the byte path.
+                self.byte_overlay = False
+                self.overlay_uploader = None
+                self.errors.append(f'Byte HUD upload unavailable; using float upload: {exc}')
+            else:
+                self.overlay_frame,self.overlay_size = frame,(w,h)
+                self.overlay_content = content
+                self.overlay_pending = None
+                return
         source = np.frombuffer(pixels,dtype=np.uint8).reshape(h,w,4)
         if not flags & 1:
             source = source[::-1]
@@ -199,6 +225,7 @@ class ViewportRenderer:
         np.multiply(source,np.float32(1/255),out=self.overlay_float,casting='unsafe')
         self.overlay_texture = gpu.types.GPUTexture((w,h),format='RGBA8',data=self.overlay_buffer)
         self.overlay_frame,self.overlay_size = frame,(w,h)
+        self.overlay_content = content
         self.overlay_pending = None
 
     def flush(self, budget_ms=6, upload_overlay=True, world_visible=True):
@@ -208,6 +235,12 @@ class ViewportRenderer:
             pixels = np.frombuffer(self.lightmap_pending,dtype=np.uint8).reshape(16,16,4)
             self.lightmap_samples = {'dark':pixels[0,0].tolist(),'sky':pixels[15,0].tolist(),'block':pixels[0,15].tolist()}
             self.lightmap_pending = None
+        # Sky visibility is independent of terrain visibility. Do not strand
+        # environment assets in the deferred terrain queue while it is hidden.
+        for key in [key for key in self.pending if key[0]=='environment']:
+            _,payload = self.pending.pop(key)
+            ident,w,h,pixels = P.texture_payload(4,payload)
+            self.environment_textures[ident] = texture(w,h,pixels)
         if not world_visible:
             # Keep coalesced CPU payloads for an older client which cannot pause
             # export; no hidden mesh, atlas or entity GPU work should run.
@@ -227,12 +260,9 @@ class ViewportRenderer:
         deadline = time.perf_counter()+budget_ms/1000
         # A new atlas must precede its patches, even under a large mesh backlog.
         for key in list(self.pending):
-            if key[0] in ('atlas','texture','environment'):
+            if key[0] in ('atlas','texture'):
                 kind,payload = self.pending.pop(key)
-                ident,w,h,pixels = P.texture_payload(4 if kind==14 else kind,payload)
-                if kind==14:
-                    self.environment_textures[ident] = texture(w,h,pixels)
-                    continue
+                ident,w,h,pixels = P.texture_payload(kind,payload)
                 self.texture_pixels[ident] = (w,h,bytearray(pixels))
                 self.textures[ident] = texture(w,h,pixels)
         atlas_start = time.perf_counter()
@@ -323,12 +353,13 @@ class ViewportRenderer:
             gpu.state.depth_test_set(depth)
             gpu.state.depth_mask_set(mask)
 
-    def draw_world(self, context, player, show_selection=True, culling=True, upload_overlay=True, environment=True):
+    def draw_world(self, context, player, show_selection=True, culling=True, upload_overlay=True, environment=True,
+                   world_visible=True):
         frame_start = time.perf_counter()
         draw_calls = 0
         visible_sections = 0
-        self.flush(upload_overlay=upload_overlay)
-        if not self.shader or not player or not player.in_world:
+        self.flush(upload_overlay=upload_overlay,world_visible=world_visible)
+        if not player or not player.in_world:
             self.performance.update(draw_calls=0,visible_sections=0,cached_sections=len(self.sections))
             self.record_frame(frame_start)
             return
@@ -341,6 +372,10 @@ class ViewportRenderer:
                     from .atmosphere import AtmosphereRenderer
                     self.atmosphere = AtmosphereRenderer()
                 self.atmosphere.draw_sky(context,atmosphere,self.environment_textures)
+            if not world_visible:
+                if atmosphere and self.lightmap:
+                    self.atmosphere.draw_weather(context,atmosphere,self.environment_textures,self.lightmap)
+                return
             gpu.state.depth_test_set('LESS_EQUAL')
             self.shader.bind()
             self.shader.uniform_sampler('lightmap',(self.lightmap if environment else None) or self.fullbright)
@@ -450,7 +485,9 @@ class ViewportRenderer:
             return
         shader = gpu.shader.from_builtin('IMAGE')
         w,h = context.region.width,context.region.height
-        batch = batch_for_shader(shader,'TRI_FAN',{'pos':[(0,0),(w,0),(w,h),(0,h)],'texCoord':[(0,0),(1,0),(1,1),(0,1)]})
+        if self.overlay_quad_size != (w,h):
+            self.overlay_quad = batch_for_shader(shader,'TRI_FAN',{'pos':[(0,0),(w,0),(w,h),(0,h)],'texCoord':[(0,0),(1,0),(1,1),(0,1)]})
+            self.overlay_quad_size = (w,h)
         blend,depth,mask = gpu.state.blend_get(),gpu.state.depth_test_get(),gpu.state.depth_mask_get()
         try:
             gpu.state.depth_test_set('NONE')
@@ -458,7 +495,7 @@ class ViewportRenderer:
             gpu.state.blend_set('ALPHA_PREMULT')
             shader.bind()
             shader.uniform_sampler('image',self.overlay_texture)
-            batch.draw(shader)
+            self.overlay_quad.draw(shader)
         finally:
             gpu.state.blend_set(blend)
             gpu.state.depth_test_set(depth)

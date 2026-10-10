@@ -20,6 +20,8 @@ def tick():
         session.tick()
     except Exception as exc:
         session.error(exc)
+    if session.closed or package().SESSION is not session:
+        return None
     # The timer delay starts AFTER tick() finishes. Adding a full frame here
     # used to limit a 16 ms update to about 30 Hz before viewport drawing.
     return max(0.001, 1/120-(time.perf_counter()-started))
@@ -27,7 +29,7 @@ def tick():
 
 def camera_changed(settings, context):
     session = package().SESSION
-    if session and not session.syncing_view:
+    if session and not session.closed and session.scene == context.scene and not session.syncing_view:
         session.choose_view(settings.camera_view)
 
 
@@ -60,6 +62,9 @@ class Start(bpy.types.Operator):
     bl_label = 'Start Blender Host'
 
     def execute(self, context):
+        current = package().SESSION
+        if current and (current.closed or not current.context_valid()):
+            package().stop_session()
         if package().SESSION:
             self.report({'WARNING'},'Host already running')
             return {'CANCELLED'}
@@ -73,6 +78,7 @@ class Start(bpy.types.Operator):
             package().SESSION = Session(context)
             bpy.app.timers.register(tick,first_interval=0.05)
         except Exception as exc:
+            package().stop_session()
             self.report({'ERROR'},str(exc))
             return {'CANCELLED'}
         return {'FINISHED'}
@@ -83,11 +89,7 @@ class Stop(bpy.types.Operator):
     bl_label = 'Stop Host'
 
     def execute(self, context):
-        if package().SESSION:
-            package().SESSION.close()
-            package().SESSION = None
-        if bpy.app.timers.is_registered(tick):
-            bpy.app.timers.unregister(tick)
+        package().stop_session()
         return {'FINISHED'}
 
 
@@ -116,7 +118,7 @@ class Capture(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.session = package().SESSION
-        if not self.session or not self.session.link.alive:
+        if not self.session or self.session.closed or not self.session.link.alive:
             self.report({'WARNING'},'Start the host and Minecraft first')
             return {'CANCELLED'}
         if self.session.captured:
@@ -129,23 +131,50 @@ class Capture(bpy.types.Operator):
         self.last_screen = None
         self.mouse = (event.mouse_x,event.mouse_y)
         self.window = context.window
-        self.timer = context.window_manager.event_timer_add(1/60,window=context.window)
+        self.window_manager = context.window_manager
+        self._released = False
+        self.timer = self.window_manager.event_timer_add(1/60,window=context.window)
+        self.session.capture_operator = self
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
+    def release(self):
+        """Release timers/cursor immediately, including during load_pre."""
+        if self._released:
+            return
+        self._released = True
+        session = self.session
+        session.captured = False
+        if session.capture_operator is self:
+            session.capture_operator = None
+        if self.timer is not None:
+            timer, self.timer = self.timer, None
+            try:
+                self.window_manager.event_timer_remove(timer)
+            except (ReferenceError, RuntimeError):
+                pass
+        try:
+            self.window.cursor_modal_restore()
+        except (ReferenceError, RuntimeError):
+            pass
+
     def finish(self, context):
-        if not self.session.closed:
-            self.session.link.input(6)
-        self.session.captured = False
-        if not self.session.closed:
-            self.session.edit_view()
-        context.window_manager.event_timer_remove(self.timer)
-        self.window.cursor_modal_restore()
+        try:
+            if not self.session.closed:
+                self.session.link.input(6)
+                self.session.edit_view()
+        except (BufferError, RuntimeError, ReferenceError) as exc:
+            self.session.error(exc)
+        finally:
+            self.release()
         return {'FINISHED'}
+
+    def cancel(self, context):
+        self.finish(context)
 
     def modal(self, context, event):
         s = self.session
-        if s.closed or s.quitting or not s.link.alive or event.type == 'WINDOW_DEACTIVATE' or (event.type == 'ESC' and event.shift and event.value == 'PRESS'):
+        if package().SESSION is not s or s.closed or s.quitting or not s.link.alive or event.type == 'WINDOW_DEACTIVATE' or (event.type == 'ESC' and event.shift and event.value == 'PRESS'):
             return self.finish(context)
         screen = bool(s.player and s.player.screen_open)
         if screen != self.last_screen:
@@ -290,7 +319,7 @@ class Panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         session = package().SESSION
-        if not session:
+        if not session or session.closed:
             layout.label(text='Blender is the game host',icon='WORLD')
             layout.operator('mciblender.export_pack',icon='EXPORT')
             layout.operator('mciblender.demo')
@@ -324,6 +353,12 @@ class Panel(bpy.types.Panel):
                 layout.operator('mciblender.launch_minecraft',icon='PLAY')
                 layout.label(text='Or launch the imported pack yourself')
             layout.label(text=f'{len(session.renderer.sections)} mesh sections')
+            if session.link.alive and session.player and session.player.in_world:
+                if context.scene.mciblender.show_minecraft and 0 not in session.renderer.textures:
+                    layout.label(text='Synchronizing Minecraft world...',icon='TIME')
+                elif context.scene.mciblender.environment and not all(
+                        key in session.renderer.environment_textures for key in (0,1,4)):
+                    layout.label(text='Synchronizing Minecraft sky...',icon='TIME')
             fps = session.renderer.profile().get('viewport_fps')
             if fps is not None and session.link.alive:
                 layout.label(text=f'Viewport: {fps:.1f} FPS')

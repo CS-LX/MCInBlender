@@ -32,8 +32,9 @@ public final class SkyLink {
 	private static final MemorySegment OPEN_STATE = Arena.global().allocate(CALL_STATE);
 	private static int lastOpenError = -1;
 	private static final MethodHandle MAP_VIEW_OF_FILE;
+	private static final MethodHandle UNMAP_VIEW_OF_FILE;
+	private static final MethodHandle CLOSE_HANDLE;
 	private static final MethodHandle GET_TICK_COUNT64;
-	private static final MethodHandle GET_CURRENT_PROCESS_ID;
 	private static final MethodHandle QUERY_PERFORMANCE_COUNTER;
 	private static final MethodHandle QUERY_PERFORMANCE_FREQUENCY;
 	private static final MethodHandle CREATE_MUTEX;
@@ -49,8 +50,9 @@ public final class SkyLink {
 		MAP_VIEW_OF_FILE = linker.downcallHandle(
 			k32.find("MapViewOfFile").orElseThrow(), FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_LONG)
 		);
+		UNMAP_VIEW_OF_FILE = linker.downcallHandle(k32.find("UnmapViewOfFile").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
+		CLOSE_HANDLE = linker.downcallHandle(k32.find("CloseHandle").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		GET_TICK_COUNT64 = linker.downcallHandle(k32.find("GetTickCount64").orElseThrow(), FunctionDescriptor.of(JAVA_LONG));
-		GET_CURRENT_PROCESS_ID = linker.downcallHandle(k32.find("GetCurrentProcessId").orElseThrow(), FunctionDescriptor.of(JAVA_INT));
 		QUERY_PERFORMANCE_COUNTER = linker.downcallHandle(k32.find("QueryPerformanceCounter").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		QUERY_PERFORMANCE_FREQUENCY = linker.downcallHandle(k32.find("QueryPerformanceFrequency").orElseThrow(), FunctionDescriptor.of(JAVA_INT, ADDRESS));
 		CREATE_MUTEX = linker.downcallHandle(k32.find("CreateMutexW").orElseThrow(), FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, ADDRESS));
@@ -73,8 +75,12 @@ public final class SkyLink {
 	}
 
 	private static volatile MemorySegment shm;
+	// Keep the named object alive when Blender closes its last handle between
+	// sessions. A surviving view alone does not preserve OpenFileMapping's name.
+	private static MemorySegment mappingHandle;
 	private static long lastOpenAttempt;
 	private static int skyrimPid;
+	private static volatile long hostGeneration;
 	private static volatile int generation;
 
 	private SkyLink() {
@@ -86,8 +92,41 @@ public final class SkyLink {
 		if (s == null) {
 			return false;
 		}
-		long beat = (long) LONG.getAcquire(s, OFF_HEADER + H_SKYRIM_HEARTBEAT);
-		return tickCount() - beat < HEARTBEAT_TIMEOUT_MS;
+		if (!hostReady(s)) return false;
+		if (!dev.skycraft.SkyCraft.BLENDER) return true;
+		long nonce = (long) LONG.getAcquire(s, H_HOST_GENERATION);
+		return s.get(JAVA_INT, H_SKYRIM_PID) == skyrimPid && nonce == hostGeneration &&
+			(nonce == 0 || (long) LONG.getAcquire(s, H_CLIENT_GENERATION) == nonce);
+	}
+
+	private static boolean hostReady(MemorySegment s) {
+		long beat = (long) LONG.getAcquire(s, H_SKYRIM_HEARTBEAT);
+		long age = tickCount() - beat;
+		if (beat <= 0 || age < 0 || age >= HEARTBEAT_TIMEOUT_MS) return false;
+		if (!dev.skycraft.SkyCraft.BLENDER) return true;
+		int seq = (int) INT.getAcquire(s, OFF_SKY_STATE + SS_SEQ);
+		return s.get(JAVA_INT, H_MAGIC) == MAGIC && s.get(JAVA_INT, H_VERSION) == VERSION &&
+			s.get(JAVA_INT, H_SKYRIM_PID) != 0 && seq != 0;
+	}
+
+	/** The heartbeat is the final acknowledgement, never a signal from an old session. */
+	private static void acknowledgeHost(MemorySegment s) {
+		if (!hostReady(s)) return;
+		boolean blender = dev.skycraft.SkyCraft.BLENDER;
+		int pid = s.get(JAVA_INT, H_SKYRIM_PID);
+		long nonce = blender ? (long) LONG.getAcquire(s, H_HOST_GENERATION) : 0;
+		boolean legacyReset = blender && nonce == 0 && s.get(JAVA_INT, H_MC_PID) == 0;
+		if (pid != skyrimPid || nonce != hostGeneration || generation == 0 || legacyReset) {
+			if (blender && ((int) INT.getAcquire(s, OFF_SKY_STATE + SS_SEQ) & 1) != 0) return;
+			skyrimPid = pid;
+			hostGeneration = nonce;
+			overlayBack = 1;
+			generation++;
+			SkyCraft.LOG.info("SkyCraft: host session changed (pid {}, generation {})", pid, generation);
+		}
+		s.set(JAVA_INT, H_MC_PID, (int) ProcessHandle.current().pid());
+		if (blender) LONG.setRelease(s, H_CLIENT_GENERATION, nonce);
+		LONG.setRelease(s, H_MC_HEARTBEAT, tickCount());
 	}
 
 	/** Bumps whenever a (new) Skyrim instance is on the other end: everything Skyrim caches must be resent. */
@@ -108,21 +147,7 @@ public final class SkyLink {
 	/** Try to open the mapping at most once a second. Call regularly from the render thread. */
 	public static void poll() {
 		if (shm != null) {
-			LONG.setRelease(shm, OFF_HEADER + H_MC_HEARTBEAT, tickCount());
-			int pid = shm.get(JAVA_INT, OFF_HEADER + H_SKYRIM_PID);
-			boolean blender = Boolean.getBoolean("mciblender.host");
-			// Blender can stop/start a host session without changing its process id.
-			// Its reset clears our PID acknowledgement. Wait for initialized host
-			// state/heartbeat, then acknowledge and invalidate every exported cache.
-			if (blender && !active()) return;
-			boolean sessionReset = blender && shm.get(JAVA_INT, OFF_HEADER + H_MC_PID) == 0;
-			if (pid != skyrimPid || sessionReset) {
-				skyrimPid = pid;
-				shm.set(JAVA_INT, OFF_HEADER + H_MC_PID, (int) ProcessHandle.current().pid());
-				overlayBack = 1;
-				generation++;
-				SkyCraft.LOG.info("SkyCraft: host session changed (pid {})", pid);
-			}
+			acknowledgeHost(shm);
 			return;
 		}
 		long now = System.currentTimeMillis();
@@ -146,6 +171,7 @@ public final class SkyLink {
 			}
 			MemorySegment view = (MemorySegment) MAP_VIEW_OF_FILE.invokeExact(handle, FILE_MAP_ALL_ACCESS, 0, 0, 0L);
 			if (view.address() == 0) {
+				int ignored = (int) CLOSE_HANDLE.invokeExact(handle);
 				SkyCraft.LOG.error("SkyCraft: MapViewOfFile failed");
 				return;
 			}
@@ -153,15 +179,15 @@ public final class SkyLink {
 			int magic = seg.get(JAVA_INT, OFF_HEADER + H_MAGIC);
 			int version = seg.get(JAVA_INT, OFF_HEADER + H_VERSION);
 			if (magic != MAGIC || version != VERSION) {
+				int ignored = (int) UNMAP_VIEW_OF_FILE.invokeExact(view);
+				ignored = (int) CLOSE_HANDLE.invokeExact(handle);
 				SkyCraft.LOG.error("SkyCraft: protocol mismatch (magic {} version {}); expected version {}", Integer.toHexString(magic), version, VERSION);
 				return;
 			}
-			seg.set(JAVA_INT, OFF_HEADER + H_MC_PID, (int) GET_CURRENT_PROCESS_ID.invokeExact());
-			LONG.setRelease(seg, OFF_HEADER + H_MC_HEARTBEAT, tickCount());
-			skyrimPid = seg.get(JAVA_INT, OFF_HEADER + H_SKYRIM_PID);
-			generation++;
+			mappingHandle = handle;
 			shm = seg;
-			SkyCraft.LOG.info("SkyCraft: linked to Skyrim (pid {})", seg.get(JAVA_INT, OFF_HEADER + H_SKYRIM_PID));
+			acknowledgeHost(seg);
+			SkyCraft.LOG.info("SkyCraft: opened host shared memory (pid {})", seg.get(JAVA_INT, H_SKYRIM_PID));
 		} catch (Throwable t) {
 			SkyCraft.LOG.error("SkyCraft: failed to open shared memory", t);
 		}
@@ -385,16 +411,19 @@ public final class SkyLink {
 	/** Drains every pending input event. Render thread only. */
 	public static void drainInput(InputSink sink) {
 		MemorySegment s = shm;
-		if (s == null) {
+		if (s == null || !active()) {
 			return;
 		}
+		int readGeneration = generation;
 		long base = OFF_INPUT_RING;
 		long head = (long) LONG.getAcquire(s, base + IR_HEAD);
 		long tail = s.get(JAVA_LONG, base + IR_TAIL);
+		if (tail > head) tail = head; // recover a legacy consumer's stale tail after reset
 		if (head - tail > INPUT_RING_ENTRIES) {
 			tail = head - INPUT_RING_ENTRIES; // producer lapped us; drop the oldest
 		}
 		while (tail < head) {
+			if (!active() || generation != readGeneration) return;
 			long e = base + IR_DATA + (tail & (INPUT_RING_ENTRIES - 1)) * 16L;
 			int type = Short.toUnsignedInt(s.get(JAVA_SHORT, e));
 			int code = Short.toUnsignedInt(s.get(JAVA_SHORT, e + 2));
@@ -404,7 +433,7 @@ public final class SkyLink {
 			tail++;
 			sink.accept(type, code, a, b, c);
 		}
-		LONG.setRelease(s, base + IR_TAIL, tail);
+		if (active() && generation == readGeneration) LONG.setRelease(s, base + IR_TAIL, tail);
 	}
 
 	// ---- actor table (read) ----------------------------------------------------------------
@@ -475,13 +504,14 @@ public final class SkyLink {
 
 	public static synchronized void pushEvent(int type, int formId, float a, float b, float c, float d, int flags, int weapon) {
 		MemorySegment s = shm;
-		if (s == null) {
+		if (s == null || !active()) {
 			return;
 		}
+		int writeGeneration = generation;
 		long base = OFF_EVENT_RING;
 		long head = s.get(JAVA_LONG, base + ER_HEAD);
 		long tail = (long) LONG.getAcquire(s, base + ER_TAIL);
-		if (head - tail >= EVENT_RING_ENTRIES) {
+		if (head < tail || head - tail >= EVENT_RING_ENTRIES) {
 			return;
 		}
 		long e = base + ER_DATA + (head & (EVENT_RING_ENTRIES - 1)) * EVENT_BYTES;
@@ -493,7 +523,7 @@ public final class SkyLink {
 		s.set(JAVA_FLOAT, e + 20, d);
 		s.set(JAVA_INT, e + 24, flags);
 		s.set(JAVA_INT, e + 28, weapon);
-		LONG.setRelease(s, base + ER_HEAD, head + 1);
+		if (active() && generation == writeGeneration) LONG.setRelease(s, base + ER_HEAD, head + 1);
 	}
 
 	// ---- world entities (write) ------------------------------------------------------------
@@ -552,7 +582,9 @@ public final class SkyLink {
 	 * waiting briefly for space. Single producer. Returns false if it never fit.
 	 */
 	public static boolean writeRender(int type, java.nio.ByteBuffer header, java.nio.ByteBuffer body) {
-		return writeRender(type, header, body, 500);
+		// Blender may be compiling/uploading meshes on its UI thread. Producers
+		// retain required records for retry instead of blocking Minecraft for 1 s.
+		return writeRender(type, header, body, dev.skycraft.SkyCraft.BLENDER ? 1 : 500);
 	}
 
 	/** Like writeRender, but gives up at once if the ring is full (per-frame data that the next frame replaces). */
@@ -562,9 +594,10 @@ public final class SkyLink {
 
 	private static synchronized boolean writeRender(int type, java.nio.ByteBuffer header, java.nio.ByteBuffer body, int attempts) {
 		MemorySegment s = shm;
-		if (s == null) {
+		if (s == null || !active()) {
 			return false;
 		}
+		int writeGeneration = generation;
 		int payload = header.remaining() + (body != null ? body.remaining() : 0);
 		long msgBytes = (8 + payload + 7) & ~7L;
 		if (msgBytes > RR_DATA_BYTES / 2) {
@@ -573,6 +606,7 @@ public final class SkyLink {
 		}
 		long base = OFF_RENDER_RING;
 		for (int attempt = 0; attempt < attempts; attempt++) {
+			if (!active() || generation != writeGeneration) return false;
 			long head = s.get(JAVA_LONG, base + RR_HEAD);
 			long tail = (long) LONG.getAcquire(s, base + RR_TAIL);
 			long pos = head % RR_DATA_BYTES;
@@ -601,6 +635,9 @@ public final class SkyLink {
 			if (body != null && body.remaining() > 0) {
 				MemorySegment.copy(MemorySegment.ofBuffer(body), 0, s, at + 8 + header.remaining(), body.remaining());
 			}
+			// Large atlas copies may overlap a host reset. The next generation must
+			// never inherit the old producer head or a partially replaced snapshot.
+			if (!active() || generation != writeGeneration) return false;
 			LONG.setRelease(s, base + RR_HEAD, head + msgBytes);
 			return true;
 		}
@@ -617,9 +654,9 @@ public final class SkyLink {
 	}
 
 	/** Publishes the frame just written into the back slot. */
-	public static void publishOverlay(int width, int height, boolean bottomUp, long frameId) {
+	public static void publishOverlay(int width, int height, boolean bottomUp, long frameId, int capturedGeneration) {
 		MemorySegment s = shm;
-		if (s == null) {
+		if (s == null || !active() || capturedGeneration != generation) {
 			return;
 		}
 		long hdr = OFF_OVERLAY_SLOT_HDR + overlayBack * SLOT_HDR_SIZE;
@@ -627,6 +664,7 @@ public final class SkyLink {
 		s.set(JAVA_INT, hdr + SH_HEIGHT, height);
 		s.set(JAVA_INT, hdr + SH_FLAGS, bottomUp ? 1 : 0);
 		s.set(JAVA_LONG, hdr + SH_FRAME_ID, frameId);
+		if (!active() || capturedGeneration != generation) return;
 		int old = (int) INT.getAndSet(s, OFF_OVERLAY_CTL + OC_STATE, overlayBack | OVERLAY_DIRTY);
 		overlayBack = old & 3;
 		LONG.getAndAdd(s, OFF_OVERLAY_CTL + OC_FRAMES_PUBLISHED, 1L);

@@ -52,6 +52,11 @@ namespace skycraft::proto
 		std::uint64_t mcHeartbeatMs;      // GetTickCount64() at last MC frame
 	};
 	static_assert(sizeof(Header) == 0x20);
+	// Optional Blender v11 extension, outside the unchanged Skyrim Header. The
+	// host publishes a nonzero nonce after resetting its rings; MC echoes it only
+	// after accepting a complete state. Zero selects the legacy PID handshake.
+	inline constexpr std::uint64_t kOffHostGeneration = 0x20;
+	inline constexpr std::uint64_t kOffClientGeneration = 0x28;
 
 	// ---- Skyrim -> MC state @0x100 (seqlock: seq odd while writing) -------------------------
 	enum SkyFlags : std::uint32_t

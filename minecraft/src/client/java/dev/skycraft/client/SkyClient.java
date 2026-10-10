@@ -27,6 +27,7 @@ public final class SkyClient {
 	private static final SkyLink.SkyState sky = new SkyLink.SkyState();
 	private static final SkyLink.McState mc = new SkyLink.McState();
 	private static volatile boolean linked;
+	private static int linkedGeneration = Integer.MIN_VALUE;
 	private static boolean tookOver;
 	private static boolean windowHidden;
 	private static int appliedViewportW, appliedViewportH;
@@ -84,10 +85,14 @@ public final class SkyClient {
 		} else {
 			dev.skycraft.world.SkyWater.clear();
 		}
-		if (nowLinked != linked) {
+		if (nowLinked != linked || (nowLinked && linkedGeneration != SkyLink.generation())) {
 			linked = nowLinked;
 			SkyCraft.LOG.info("SkyCraft: Skyrim link {}", linked ? "up" : "down");
 			if (linked) {
+				linkedGeneration = SkyLink.generation();
+				InputBridge.releaseAll();
+				exporterErrors = 0;
+				skyrimStalled = false;
 				tookOver = true;
 				unlinkedHold = null;
 				// A restarted Blender host has a fresh teleport sequence. Adopt it
@@ -106,8 +111,8 @@ public final class SkyClient {
 		}
 
 		Minecraft minecraft = Minecraft.getInstance();
-		hideWindowOnce(minecraft);
 		applyViewportSize(minecraft);
+		hideWindowOnce(minecraft);
 		MirrorWorld.openWhenReady(minecraft);
 
 		if (sky.menuOpen() || sky.loading()) {
@@ -433,9 +438,20 @@ public final class SkyClient {
 			return; // Skyrim is paused (menu / alt-tab): don't block every frame waiting for it
 		}
 		skyrimStalled = false;
-		long deadline = System.nanoTime() + 25_000_000L;
+		// Blender's UI thread may take longer than 25 ms to present a complex
+		// viewport. Let it pace us instead of rendering several unused HUD frames.
+		long deadline = System.nanoTime() + (SkyCraft.BLENDER ? 100_000_000L : 25_000_000L);
 		// SkyState.seq advances by 2 per Skyrim frame (odd while writing).
 		while ((SkyLink.skyStateSeq() >>> 1) == lastPacedSeq && System.nanoTime() < deadline) {
+			if (SkyCraft.BLENDER) {
+				if (!SkyLink.active()) break;
+				// Leave CPU time for Blender's Python/UI work. A short park bounds
+				// added input latency; the final millisecond can still spin.
+				if (deadline - System.nanoTime() > 1_000_000L) {
+					java.util.concurrent.locks.LockSupport.parkNanos(200_000L);
+					continue;
+				}
+			}
 			Thread.onSpinWait();
 			if (deadline - System.nanoTime() > 2_000_000L) {
 				Thread.yield();
@@ -467,7 +483,8 @@ public final class SkyClient {
 	}
 
 	private static void hideWindowOnce(Minecraft minecraft) {
-		if (windowHidden || SHOW_WINDOW) {
+		if (SHOW_WINDOW || (windowHidden &&
+			(SDLVideo.SDL_GetWindowFlags(minecraft.getWindow().handle()) & SDLVideo.SDL_WINDOW_HIDDEN) != 0)) {
 			return;
 		}
 		windowHidden = true;

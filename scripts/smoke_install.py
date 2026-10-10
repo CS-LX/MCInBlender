@@ -45,7 +45,11 @@ def main():
     info = json.loads((ROOT/'dist/build-info.json').read_text())
     profile = ROOT/'.local'/'package-smoke'
     env = os.environ.copy()
-    for name, folder in [('BLENDER_USER_CONFIG', 'config'), ('BLENDER_USER_SCRIPTS', 'scripts')]:
+    env['BLENDER_USER_RESOURCES'] = str(profile)
+    # Extension wheel synchronization also runs during legacy add-on installs.
+    # Isolate it as well, so smoke tests never clean the real user's wheel cache.
+    for name, folder in [('BLENDER_USER_CONFIG', 'config'), ('BLENDER_USER_SCRIPTS', 'scripts'),
+                         ('BLENDER_USER_EXTENSIONS', 'extensions'), ('BLENDER_USER_DATAFILES', 'datafiles')]:
         path = profile/folder
         path.mkdir(parents=True, exist_ok=True)
         env[name] = str(path)
@@ -63,6 +67,13 @@ def main():
     print(collision.stdout)
     if 'ASYNC_COLLISION_PASS ' not in collision.stdout:
         raise RuntimeError('Packaged collision export regression did not complete')
+    lifecycle = subprocess.run([str(blender), '--background', '--python-exit-code', '1',
+        '--python', str(ROOT/'scripts/verify_host_lifecycle.py'), '--', '--installed'],
+        env=env, cwd=ROOT, check=True, capture_output=True, text=True,
+        encoding='utf8', errors='replace', timeout=120)
+    print(lifecycle.stdout)
+    if 'HOST_LIFECYCLE_PASS:' not in lifecycle.stdout:
+        raise RuntimeError('Packaged host lifecycle regression did not complete')
 
 
 if __name__ == '__main__':
